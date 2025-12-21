@@ -139,3 +139,221 @@ async function handleSubmit() {
     showSuccess()
 }
 ```
+
+---
+
+## 5. Component Architecture (SRP)
+
+### 5.1 Single Responsibility Principle for Components
+
+- **Rule:** Each component should have ONE responsibility.
+- **Rule:** If a component does more than one thing (layout + API calls + state), **split it**.
+
+| ❌ God Component | ✅ Split Components |
+|------------------|---------------------|
+| `pages/index.vue` with 300+ lines doing SEO, forms, API, layout | `pages/index.vue` (SEO only) + `HeroSection.vue` (form) + `FeaturesGrid.vue` (display) |
+
+### 5.2 Component Naming Convention
+
+- **Rule:** Use **PascalCase** for component names.
+- **Rule:** Use **prefix folders** to organize by feature.
+
+```
+components/
+├── landing/           # Landing page components
+│   ├── HeroSection.vue
+│   ├── FeaturesGrid.vue
+│   ├── SocialProof.vue
+│   └── TheFooter.vue
+├── dashboard/         # Dashboard components
+│   ├── StatsCard.vue
+│   └── RecentDecks.vue
+└── common/            # Shared/reusable components
+    ├── TheNavbar.vue
+    └── LoadingSpinner.vue
+```
+
+### 5.3 Component Structure Template
+
+Every component should follow this structure:
+
+```vue
+<script setup lang="ts">
+/**
+ * ComponentName
+ * 
+ * Responsible for: [Single responsibility description]
+ */
+
+// 1. Imports (external and internal)
+import { useMyStore } from '~/stores/myStore'
+
+// 2. Props & Emits
+interface Props {
+    title: string
+    isActive?: boolean
+}
+const props = withDefaults(defineProps<Props>(), {
+    isActive: false
+})
+const emit = defineEmits<{
+    (e: 'update', value: string): void
+}>()
+
+// 3. Composables & Stores
+const store = useMyStore()
+const toast = useToast()
+
+// 4. Reactive State
+const isLoading = ref(false)
+
+// 5. Computed Properties
+const displayTitle = computed(() => props.title.toUpperCase())
+
+// 6. Functions (with early return pattern)
+async function handleSubmit() {
+    // ...
+}
+
+// 7. Lifecycle Hooks
+onMounted(() => {
+    // ...
+})
+</script>
+
+<template>
+    <!-- Single root element with semantic HTML -->
+</template>
+```
+
+### 5.4 Page vs Component Responsibilities
+
+| Layer | Responsibility |
+|-------|----------------|
+| **`pages/*.vue`** | SEO (`useSeoMeta`, `useHead`), route params, composing child components |
+| **`components/*.vue`** | UI rendering, user interaction, calling stores for data/actions |
+| **`stores/*.ts`** | State management, API calls, business logic |
+
+---
+
+## 6. State Management (Pinia)
+
+### 6.1 When to Use Pinia
+
+| Use Case | Solution |
+|----------|----------|
+| Local component state (form input, toggle) | `ref()` / `reactive()` |
+| Shared state across components | **Pinia Store** |
+| Server data fetching | TanStack Query (`useQuery`) |
+| Complex form with validation | Pinia Store + Zod |
+
+### 6.2 Store Location & Naming
+
+- **Location:** `stores/[feature].ts`
+- **Naming:** `use[Feature]Store` (e.g., `useWaitlistStore`, `useDeckStore`)
+
+### 6.3 Setup Store Syntax (Preferred)
+
+Always use the **Setup Store** syntax for better TypeScript support:
+
+```typescript
+// stores/waitlist.ts
+import { z } from 'zod'
+
+// Types
+interface JoinResult {
+    success: boolean
+    message: string
+}
+
+// Validation
+const emailSchema = z.string().email('Email inválido')
+
+// Store Definition
+export const useWaitlistStore = defineStore('waitlist', () => {
+    // === STATE ===
+    const email = ref('')
+    const loading = ref(false)
+    const error = ref<string | null>(null)
+
+    // === GETTERS (computed) ===
+    const isValid = computed(() => emailSchema.safeParse(email.value).success)
+
+    // === ACTIONS ===
+    function setEmail(value: string) {
+        email.value = value
+        if (error.value) error.value = null
+    }
+
+    async function joinWaitlist(): Promise<JoinResult> {
+        // Validate first
+        const validation = emailSchema.safeParse(email.value)
+        if (!validation.success) {
+            error.value = validation.error.errors[0]?.message ?? 'Erro'
+            return { success: false, message: error.value }
+        }
+
+        loading.value = true
+        try {
+            const response = await $fetch('/api/waitlist', {
+                method: 'POST',
+                body: { email: email.value }
+            })
+            email.value = ''
+            return { success: true, message: response.message }
+        } catch {
+            error.value = 'Erro de conexão'
+            return { success: false, message: error.value }
+        } finally {
+            loading.value = false
+        }
+    }
+
+    // === RETURN (expose to components) ===
+    return {
+        // State (readonly for safety)
+        email: readonly(email),
+        loading: readonly(loading),
+        error: readonly(error),
+        // Getters
+        isValid,
+        // Actions
+        setEmail,
+        joinWaitlist,
+    }
+})
+```
+
+### 6.4 Using Store in Components
+
+```vue
+<script setup lang="ts">
+import { useWaitlistStore } from '~/stores/waitlist'
+
+const store = useWaitlistStore()
+const toast = useToast()
+
+// Local state that syncs with store
+const localEmail = ref('')
+watch(localEmail, (v) => store.setEmail(v))
+
+async function handleSubmit() {
+    const result = await store.joinWaitlist()
+    
+    if (!result.success) {
+        toast.add({ title: 'Erro', description: result.message, color: 'red' })
+        return
+    }
+    
+    toast.add({ title: 'Sucesso!', description: result.message, color: 'green' })
+    localEmail.value = ''
+}
+</script>
+
+<template>
+    <form @submit.prevent="handleSubmit">
+        <UInput v-model="localEmail" :disabled="store.loading" />
+        <UButton type="submit" :loading="store.loading">Enviar</UButton>
+    </form>
+</template>
+```
