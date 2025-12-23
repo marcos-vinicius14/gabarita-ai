@@ -1,16 +1,36 @@
 import { drizzle } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
+import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 
-const config = useRuntimeConfig();
+let _db: PostgresJsDatabase | null = null;
 
-const isProduction = process.env.NODE_ENV === 'production';
-const isNeonDatabase = config.databaseUrl?.includes('neon.tech');
+function createDatabaseClient(): PostgresJsDatabase {
+    const config = useRuntimeConfig();
 
-const client = postgres(config.databaseUrl, {
-    max: 1,
-    idle_timeout: 20,
-    connect_timeout: 10,
-    ssl: isProduction || isNeonDatabase ? 'require' : false,
-});
+    if (!config.databaseUrl) {
+        console.error('[DB Error] DATABASE_URL is not configured. Check NUXT_DATABASE_URL in Cloudflare.');
+        throw new Error('DATABASE_URL environment variable is not set.');
+    }
 
-export const db = drizzle(client);
+    console.log('[DB] Initializing database connection...');
+
+    const isNeonDatabase = config.databaseUrl.includes('neon.tech');
+
+    const client = postgres(config.databaseUrl, {
+        max: 1,
+        idle_timeout: 20,
+        connect_timeout: 10,
+        ssl: isNeonDatabase ? 'require' : undefined,
+    });
+
+    return drizzle(client);
+}
+
+export const db = {
+    get instance(): PostgresJsDatabase {
+        if (!_db) {
+            _db = createDatabaseClient();
+        }
+        return _db;
+    }
+};

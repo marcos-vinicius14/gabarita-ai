@@ -32,7 +32,7 @@ export default defineEventHandler(async (event) => {
         const { email, source } = parseResult.data;
 
         // Call the service layer
-        const result = await joinWaitlist(db, email, source);
+        const result = await joinWaitlist(db.instance, email, source);
 
         return result;
     } catch (error) {
