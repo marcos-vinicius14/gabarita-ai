@@ -15,8 +15,8 @@ export default defineNuxtConfig({
 
   runtimeConfig: {
     googleApiKey: '',
-    databaseUrl: '',
-    redisUrl: '',
+    databaseUrl: process.env.DATABASE_URL,
+    redisUrl: process.env.REDIS_URL,
     public: {
       appName: 'Gabarita.ai'
     }
