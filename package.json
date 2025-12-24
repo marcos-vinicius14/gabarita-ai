@@ -15,13 +15,13 @@
   "dependencies": {
     "@ai-sdk/google": "^1.0.0",
     "@langchain/google-genai": "^0.1.0",
+    "@neondatabase/serverless": "^1.0.2",
     "@pinia/nuxt": "^0.11.3",
     "ai": "^4.0.0",
     "drizzle-orm": "^0.36.0",
     "langchain": "^0.3.0",
     "nuxt": "^3.14.0",
     "pinia": "^3.0.4",
-    "postgres": "^3.4.0",
     "uuidv7": "^1.1.0",
     "vue": "latest",
     "zod": "^3.23.0"

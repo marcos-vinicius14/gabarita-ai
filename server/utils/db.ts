@@ -1,33 +1,37 @@
-import { drizzle } from 'drizzle-orm/postgres-js';
-import postgres from 'postgres';
-import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
+/**
+ * Database connection using Neon HTTP driver.
+ * 
+ * This approach is optimized for Cloudflare Workers/Pages:
+ * - Stateless HTTP connections (no TCP handshake overhead)
+ * - No connection pooling needed
+ * - Sub-millisecond cold starts
+ */
 
-let _db: PostgresJsDatabase | null = null;
+import { neon } from '@neondatabase/serverless';
+import { drizzle } from 'drizzle-orm/neon-http';
+import type { NeonHttpDatabase } from 'drizzle-orm/neon-http';
 
-function createDatabaseClient(): PostgresJsDatabase {
+let _db: NeonHttpDatabase | null = null;
+
+function createDatabaseClient(): NeonHttpDatabase {
     const config = useRuntimeConfig();
 
-    if (!config.databaseUrl) {
+    const databaseUrl = config.databaseUrl;
+
+    if (!databaseUrl) {
         console.error('[DB Error] DATABASE_URL is not configured. Check NUXT_DATABASE_URL in Cloudflare.');
         throw new Error('DATABASE_URL environment variable is not set.');
     }
 
-    console.log('[DB] Initializing database connection...');
+    console.log('[DB] Initializing Neon HTTP database connection...');
 
-    const isNeonDatabase = config.databaseUrl.includes('neon.tech');
+    const sql = neon(databaseUrl);
 
-    const client = postgres(config.databaseUrl, {
-        max: 1,
-        idle_timeout: 20,
-        connect_timeout: 10,
-        ssl: isNeonDatabase ? 'require' : undefined,
-    });
-
-    return drizzle(client);
+    return drizzle(sql);
 }
 
 export const db = {
-    get instance(): PostgresJsDatabase {
+    get instance(): NeonHttpDatabase {
         if (!_db) {
             _db = createDatabaseClient();
         }
