@@ -6,7 +6,7 @@
  */
 
 import { saveEmail, type SaveEmailResult } from './waitlist.repository';
-import type { PgDatabase } from 'drizzle-orm/pg-core';
+
 
 export interface JoinWaitlistResult {
     success: boolean;
@@ -27,7 +27,7 @@ function normalizeEmail(email: string): string {
  * @returns JoinWaitlistResult with success status and user-friendly message
  */
 export async function joinWaitlist(
-    db: PgDatabase<any>,
+    db: any,
     email: string,
     source: string = 'landing_page'
 ): Promise<JoinWaitlistResult> {

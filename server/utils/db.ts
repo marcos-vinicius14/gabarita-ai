@@ -1,40 +1,29 @@
 /**
  * Database connection using Neon HTTP driver.
  * 
- * This approach is optimized for Cloudflare Workers/Pages:
- * - Stateless HTTP connections (no TCP handshake overhead)
- * - No connection pooling needed
+ * Optimized for Cloudflare Workers/Pages:
+ * - Stateless HTTP connections
+ * - No TCP handshake overhead
  * - Sub-millisecond cold starts
  */
 
 import { neon } from '@neondatabase/serverless';
 import { drizzle } from 'drizzle-orm/neon-http';
-import type { NeonHttpDatabase } from 'drizzle-orm/neon-http';
+import * as schema from '../db/schema';
 
-let _db: NeonHttpDatabase | null = null;
+// 1. Get the connection string safely
+const config = useRuntimeConfig();
+const connString = config.databaseUrl || process.env.DATABASE_URL || process.env.NUXT_DATABASE_URL || '';
 
-function createDatabaseClient(): NeonHttpDatabase {
-    const config = useRuntimeConfig();
-
-    const databaseUrl = config.databaseUrl;
-
-    if (!databaseUrl) {
-        console.error('[DB Error] DATABASE_URL is not configured. Check NUXT_DATABASE_URL in Cloudflare.');
-        throw new Error('DATABASE_URL environment variable is not set.');
-    }
-
-    console.log('[DB] Initializing Neon HTTP database connection...');
-
-    const sql = neon(databaseUrl);
-
-    return drizzle(sql);
+if (!connString) {
+    console.error('[DB Error] DATABASE_URL is not defined. Check NUXT_DATABASE_URL in Cloudflare.');
+    throw new Error('DATABASE_URL is not defined');
 }
 
-export const db = {
-    get instance(): NeonHttpDatabase {
-        if (!_db) {
-            _db = createDatabaseClient();
-        }
-        return _db;
-    }
-};
+console.log('[DB] Initializing Neon HTTP connection...');
+
+// 2. Initialize the HTTP client
+const sql = neon(connString);
+
+// 3. Initialize Drizzle with the HTTP adapter
+export const db = drizzle(sql, { schema });

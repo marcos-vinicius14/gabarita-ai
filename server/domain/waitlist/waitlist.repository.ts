@@ -6,7 +6,7 @@
  */
 
 import { waitlist } from '~/server/db/schema';
-import type { PgDatabase } from 'drizzle-orm/pg-core';
+
 
 export interface SaveEmailResult {
     success: boolean;
@@ -22,7 +22,7 @@ export interface SaveEmailResult {
  * @returns SaveEmailResult indicating success and whether it was a new email
  */
 export async function saveEmail(
-    db: PgDatabase<any>,
+    db: any,
     email: string,
     source: string = 'landing_page'
 ): Promise<SaveEmailResult> {
