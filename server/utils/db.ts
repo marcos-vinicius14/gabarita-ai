@@ -1,29 +1,27 @@
 /**
- * Database connection using Neon HTTP driver.
+ * Database connection using Neon WebSocket Pool.
  * 
  * Optimized for Cloudflare Workers/Pages:
- * - Stateless HTTP connections
- * - No TCP handshake overhead
- * - Sub-millisecond cold starts
+ * - WebSocket connection (stable on Cloudflare)
+ * - Behaves like a standard Postgres client
+ * - Bypasses tagged-template restriction of HTTP adapter
  */
 
-import { neon } from '@neondatabase/serverless';
-import { drizzle } from 'drizzle-orm/neon-http';
+import { Pool } from '@neondatabase/serverless';
+import { drizzle } from 'drizzle-orm/neon-serverless';
 import * as schema from '../db/schema';
 
-// 1. Get the connection string safely
 const config = useRuntimeConfig();
-const connString = config.databaseUrl || process.env.DATABASE_URL || process.env.NUXT_DATABASE_URL || '';
+const connString = config.databaseUrl || process.env.DATABASE_URL || '';
 
 if (!connString) {
-    console.error('[DB Error] DATABASE_URL is not defined. Check NUXT_DATABASE_URL in Cloudflare.');
-    throw new Error('DATABASE_URL is not defined');
+    console.error('[DB Error] DATABASE_URL is missing. Please check Cloudflare Environment Variables.');
+    throw new Error('DATABASE_URL is missing. Please check Cloudflare Environment Variables.');
 }
 
-console.log('[DB] Initializing Neon HTTP connection...');
+console.log('[DB] Initializing Neon WebSocket Pool connection...');
 
-// 2. Initialize the HTTP client
-const sql = neon(connString);
+// Use the Pool for WebSocket connection (Stable on Cloudflare)
+const pool = new Pool({ connectionString: connString });
 
-// 3. Initialize Drizzle with the HTTP adapter
-export const db = drizzle(sql, { schema });
+export const db = drizzle(pool, { schema });
