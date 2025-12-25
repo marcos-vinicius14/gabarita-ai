@@ -1,45 +1,93 @@
 /**
  * Authentication Middleware
  * 
- * Extracts and verifies JWT from Authorization header.
- * Attaches user payload to event.context for protected routes.
+ * BFF Pattern:
+ * - Reads session from cookie
+ * - Verifies access token from session
+ * - Automatically refreshes expired tokens
+ * - Attaches user payload to event.context
  * 
  * Usage in routes:
  * - Access user: event.context.user
+ * - Access session: event.context.session
  * - Check role: event.context.user?.role
  */
 
 import { verifyAccessToken, type TokenPayload } from '~/server/utils/auth/tokens';
+import { getSession, updateSession, type Session } from '~/server/utils/auth/session';
+import { refreshTokens } from '~/server/domain/auth/auth.service';
+import { SESSION_COOKIE } from '~/server/utils/auth/cookies';
 
 declare module 'h3' {
     interface H3EventContext {
         user?: TokenPayload;
+        session?: Session;
     }
 }
 
 export default defineEventHandler(async (event) => {
     const path = getRequestURL(event).pathname;
 
-    if (path.startsWith('/api/auth/')) {
+    // Skip these auth routes (they handle their own auth)
+    const publicAuthRoutes = [
+        '/api/auth/login',
+        '/api/auth/register',
+        '/api/auth/logout',
+        '/api/auth/refresh',
+    ];
+
+    if (publicAuthRoutes.includes(path)) {
         return;
     }
 
+    // Skip non-API routes
     if (!path.startsWith('/api/')) {
         return;
     }
-    const authHeader = getHeader(event, 'authorization');
 
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    const sessionId = getCookie(event, SESSION_COOKIE.name);
+
+    if (!sessionId) {
         return;
     }
 
-    const accessToken = authHeader.substring(7);
+    const session = await getSession(sessionId);
+
+    if (!session) {
+        deleteCookie(event, SESSION_COOKIE.name, { path: '/' });
+        return;
+    }
 
     try {
-        const payload = await verifyAccessToken(accessToken);
+        const payload = await verifyAccessToken(session.accessToken);
         event.context.user = payload;
+        event.context.session = session;
     } catch {
-        // Invalid token - let the route decide how to handle
-        // Don't throw here, just don't set user
+        try {
+            const ip = getRequestIP(event, { xForwardedFor: true }) || 'unknown';
+            const userAgent = getHeader(event, 'user-agent') || 'unknown';
+
+            const result = await refreshTokens(session.refreshToken, { ip, userAgent });
+
+            if (result.accessToken && result.refreshToken) {
+                // Update session with new tokens
+                await updateSession(sessionId, {
+                    accessToken: result.accessToken,
+                    refreshToken: result.refreshToken,
+                });
+
+                // Verify the new access token and set context
+                const payload = await verifyAccessToken(result.accessToken);
+                event.context.user = payload;
+                event.context.session = {
+                    ...session,
+                    accessToken: result.accessToken,
+                    refreshToken: result.refreshToken,
+                };
+            }
+        } catch {
+            // Refresh also failed - session is invalid
+            deleteCookie(event, SESSION_COOKIE.name, { path: '/' });
+        }
     }
 });

@@ -1,20 +1,21 @@
 /**
  * GET /api/auth/me
  * 
- * Returns the current authenticated user's information.
+ * Returns the current authenticated user data.
  * 
- * Security:
- * - Requires valid access token in Authorization header
+ * BFF Pattern:
+ * - User is extracted from session by middleware
+ * - Available in event.context.user
  */
 
-import { verifyAccessToken } from '~/server/utils/auth/tokens';
 import { findUserById } from '~/server/domain/auth/auth.repository';
+import { handleException, AuthenticationRequiredException } from '~/server/utils/exceptions';
 
 export default defineEventHandler(async (event) => {
     try {
-        const authHeader = getHeader(event, 'authorization');
+        const sessionUser = event.context.user;
 
-        if (!authHeader || !authHeader.startsWith('Bearer ')) {
+        if (!sessionUser) {
             setResponseStatus(event, 401);
             return {
                 success: false,
@@ -23,20 +24,7 @@ export default defineEventHandler(async (event) => {
             };
         }
 
-        const accessToken = authHeader.substring(7);
-
-        let payload;
-        try {
-            payload = await verifyAccessToken(accessToken);
-        } catch {
-            setResponseStatus(event, 401);
-            return {
-                success: false,
-                message: 'Token de acesso inválido ou expirado.',
-                code: 'INVALID_TOKEN',
-            };
-        }
-        const user = await findUserById(payload.sub);
+        const user = await findUserById(sessionUser.sub);
 
         if (!user) {
             setResponseStatus(event, 401);
@@ -46,25 +34,22 @@ export default defineEventHandler(async (event) => {
                 code: 'USER_NOT_FOUND',
             };
         }
+
         return {
             success: true,
             data: {
-                id: user.id,
-                email: user.email,
-                name: user.name,
-                role: user.role,
-                emailVerified: !!user.emailVerified,
-                createdAt: user.createdAt,
+                user: {
+                    id: user.id,
+                    email: user.email,
+                    name: user.name,
+                    role: user.role,
+                    emailVerified: !!user.emailVerified,
+                    createdAt: user.createdAt,
+                },
             },
         };
 
     } catch (error) {
-        console.error('[Auth Me Error]', error);
-
-        setResponseStatus(event, 500);
-        return {
-            success: false,
-            message: 'Erro inesperado. Tente novamente mais tarde.',
-        };
+        return handleException(event, error);
     }
 });

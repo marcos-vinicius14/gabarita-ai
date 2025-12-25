@@ -200,8 +200,6 @@ export async function loginUser(
         success: true,
         message: 'Login successful.',
         data: {
-            accessToken: tokenPair.accessToken,
-            expiresIn: tokenPair.expiresIn,
             user: {
                 id: user.id,
                 email: user.email,
@@ -209,6 +207,7 @@ export async function loginUser(
                 role: user.role,
             },
         },
+        accessToken: tokenPair.accessToken,
         refreshToken: tokenPair.refreshToken,
     };
 }
@@ -285,8 +284,6 @@ export async function refreshTokens(
         success: true,
         message: 'Token refreshed.',
         data: {
-            accessToken: tokenPair.accessToken,
-            expiresIn: tokenPair.expiresIn,
             user: {
                 id: user.id,
                 email: user.email,
@@ -294,6 +291,7 @@ export async function refreshTokens(
                 role: user.role,
             },
         },
+        accessToken: tokenPair.accessToken,
         refreshToken: tokenPair.refreshToken,
     };
 }

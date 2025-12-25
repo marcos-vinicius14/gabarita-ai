@@ -95,8 +95,8 @@ export interface AuthResult {
     success: boolean;
     message: string;
     data?: {
-        accessToken: string;
-        expiresIn: number;
+        accessToken?: string;
+        expiresIn?: number;
         user: {
             id: string;
             email: string;
@@ -104,6 +104,8 @@ export interface AuthResult {
             role: string;
         };
     };
+    // Internal tokens for BFF session creation (not sent to client)
+    accessToken?: string;
     refreshToken?: string;
 }
 

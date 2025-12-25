@@ -1,62 +1,64 @@
 /**
  * POST /api/auth/refresh
  * 
- * Refreshes the access token using the refresh token from cookie.
+ * Manually refreshes the session tokens.
  * 
- * Security:
- * - Token rotation (new refresh token on each use)
- * - Reuse detection (revokes all family tokens on reuse)
- * - HTTP-Only cookie for refresh token
+ * BFF Pattern:
+ * - This is typically called internally by middleware
+ * - Can also be called explicitly to force token refresh
+ * - Updates session with new tokens
  */
 
 import { refreshTokens } from '~/server/domain/auth/auth.service';
 import { handleException, AuthenticationRequiredException } from '~/server/utils/exceptions';
-
-const REFRESH_TOKEN_COOKIE = {
-    name: 'refresh_token',
-    options: {
-        httpOnly: true,
-        secure: process.env.NODE_ENV === 'production',
-        sameSite: 'strict' as const,
-        path: '/api/auth',
-        maxAge: 60 * 60 * 24 * 7,
-    },
-};
+import { getSession, updateSession, deleteSession } from '~/server/utils/auth/session';
+import { SESSION_COOKIE } from '~/server/utils/auth/cookies';
 
 export default defineEventHandler(async (event) => {
     try {
-        const refreshToken = getCookie(event, REFRESH_TOKEN_COOKIE.name);
+        const sessionId = getCookie(event, SESSION_COOKIE.name);
 
-        if (!refreshToken) {
+        if (!sessionId) {
             throw new AuthenticationRequiredException({
-                details: { reason: 'NO_TOKEN' },
+                details: { reason: 'NO_SESSION' },
+            });
+        }
+
+        const session = await getSession(sessionId);
+
+        if (!session) {
+            deleteCookie(event, SESSION_COOKIE.name, { path: '/' });
+            throw new AuthenticationRequiredException({
+                details: { reason: 'INVALID_SESSION' },
             });
         }
 
         const ip = getRequestIP(event, { xForwardedFor: true }) || 'unknown';
         const userAgent = getHeader(event, 'user-agent') || 'unknown';
 
-        const result = await refreshTokens(refreshToken, { ip, userAgent });
+        const result = await refreshTokens(session.refreshToken, { ip, userAgent });
 
-        if (result.refreshToken) {
-            setCookie(
-                event,
-                REFRESH_TOKEN_COOKIE.name,
-                result.refreshToken,
-                REFRESH_TOKEN_COOKIE.options
-            );
+        if (result.accessToken && result.refreshToken) {
+            await updateSession(sessionId, {
+                accessToken: result.accessToken,
+                refreshToken: result.refreshToken,
+            });
         }
 
         return {
             success: result.success,
             message: result.message,
-            data: result.data,
+            data: result.data ? {
+                user: result.data.user,
+            } : undefined,
         };
 
     } catch (error) {
-        deleteCookie(event, REFRESH_TOKEN_COOKIE.name, {
-            path: '/api/auth',
-        });
+        const sessionId = getCookie(event, SESSION_COOKIE.name);
+        if (sessionId) {
+            await deleteSession(sessionId);
+        }
+        deleteCookie(event, SESSION_COOKIE.name, { path: '/' });
 
         return handleException(event, error);
     }

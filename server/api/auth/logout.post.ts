@@ -1,30 +1,36 @@
 /**
  * POST /api/auth/logout
  * 
- * Logs out the user by revoking the refresh token.
+ * Logs out user by destroying the session.
  * 
- * Security:
- * - Revokes token in database
- * - Clears HTTP-Only cookie
+ * BFF Pattern:
+ * - Deletes server-side session
+ * - Clears session cookie
+ * - Revokes refresh token in database
  */
 
 import { logoutUser } from '~/server/domain/auth/auth.service';
-
-const REFRESH_TOKEN_COOKIE_NAME = 'refresh_token';
+import { getSession, deleteSession } from '~/server/utils/auth/session';
+import { SESSION_COOKIE } from '~/server/utils/auth/cookies';
 
 export default defineEventHandler(async (event) => {
     try {
-        const refreshToken = getCookie(event, REFRESH_TOKEN_COOKIE_NAME);
+        const sessionId = getCookie(event, SESSION_COOKIE.name);
 
-        if (refreshToken) {
-            const ip = getRequestIP(event, { xForwardedFor: true }) || 'unknown';
-            const userAgent = getHeader(event, 'user-agent') || 'unknown';
+        if (sessionId) {
+            const session = await getSession(sessionId);
 
-            await logoutUser(refreshToken, { ip, userAgent });
+            if (session) {
+                const ip = getRequestIP(event, { xForwardedFor: true }) || 'unknown';
+                const userAgent = getHeader(event, 'user-agent') || 'unknown';
+
+                await logoutUser(session.refreshToken, { ip, userAgent });
+                await deleteSession(sessionId);
+            }
         }
 
-        deleteCookie(event, REFRESH_TOKEN_COOKIE_NAME, {
-            path: '/api/auth',
+        deleteCookie(event, SESSION_COOKIE.name, {
+            path: '/',
         });
 
         return {
@@ -32,11 +38,9 @@ export default defineEventHandler(async (event) => {
             message: 'Usuário deslogado com sucesso.',
         };
 
-    } catch (error) {
-        console.error('[Auth Logout Error]', error);
-
-        deleteCookie(event, REFRESH_TOKEN_COOKIE_NAME, {
-            path: '/api/auth',
+    } catch {
+        deleteCookie(event, SESSION_COOKIE.name, {
+            path: '/',
         });
 
         return {
