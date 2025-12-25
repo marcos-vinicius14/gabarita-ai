@@ -983,4 +983,164 @@ export function createReviewService(deps: {
         }
     };
 }
+
+```
+
+---
+
+## 13. Discriminated Unions Pattern
+
+### 13.1 Overview
+
+- **Rule:** Use **Discriminated Unions** (Tagged Unions) for all API response types.
+- **Why:** Provides exhaustive type checking, eliminates null/undefined ambiguities, and makes error handling explicit.
+- **When:** API responses, result types, state machines, and any scenario with multiple possible outcomes.
+
+### 13.2 API Response Types
+
+Always define API responses as discriminated unions:
+
+```typescript
+// types/api.ts
+
+// Base response shapes
+interface SuccessResponse<T> {
+    success: true;
+    message: string;
+    data: T;
+}
+
+interface ErrorResponse {
+    success: false;
+    message: string;
+    code?: string;
+    errors?: Record<string, string[]>;
+}
+
+// Discriminated union type
+export type ApiResponse<T> = SuccessResponse<T> | ErrorResponse;
+
+// Example usage
+export type LoginResponse = ApiResponse<{ user: UserProfile }>;
+export type RegisterResponse = ApiResponse<undefined>;
+```
+
+### 13.3 Type Guards
+
+Always create type guard functions for runtime checking:
+
+```typescript
+// ✅ Type guard functions
+export function isSuccess<T>(response: ApiResponse<T>): response is SuccessResponse<T> {
+    return response.success === true;
+}
+
+export function isError<T>(response: ApiResponse<T>): response is ErrorResponse {
+    return response.success === false;
+}
+```
+
+### 13.4 Usage with Early Return Pattern
+
+Combine discriminated unions with early return for clean code:
+
+```typescript
+// ✅ Correct: Discriminated union + early return
+async function handleLogin() {
+    const result = await login({ email, password });
+    
+    // Type guard narrows the type
+    if (!isSuccess(result)) {
+        showError(result.message);  // TypeScript knows result is ErrorResponse
+        return;
+    }
+    
+    // TypeScript knows result is SuccessResponse<{ user: UserProfile }>
+    const { user } = result.data;
+    navigateTo('/dashboard');
+}
+```
+
+```typescript
+// ❌ Incorrect: Optional properties without union
+interface BadResponse {
+    success: boolean;
+    message: string;
+    data?: { user: UserProfile };  // Ambiguous - when is data present?
+    code?: string;
+}
+```
+
+### 13.5 TanStack Query Integration
+
+Use discriminated unions with TanStack Query:
+
+```typescript
+// composables/useAuth.ts
+import { useMutation, useQuery } from '@tanstack/vue-query';
+import { isSuccess, type LoginResponse, type LoginInput } from '~/types/auth';
+
+export function useAuth() {
+    const loginMutation = useMutation({
+        mutationFn: async (input: LoginInput): Promise<LoginResponse> => {
+            return await $fetch('/api/auth/login', {
+                method: 'POST',
+                body: input,
+            });
+        },
+    });
+
+    async function login(input: LoginInput) {
+        const result = await loginMutation.mutateAsync(input);
+        
+        if (isSuccess(result)) {
+            // TypeScript knows: result.data.user exists
+            return result.data.user;
+        }
+        
+        // TypeScript knows: result.message, result.code exist
+        throw new Error(result.message);
+    }
+
+    return { login, loginMutation };
+}
+```
+
+### 13.6 State Machine Example
+
+Use discriminated unions for complex state:
+
+```typescript
+// ✅ State machine with discriminated unions
+type AuthState =
+    | { status: 'idle' }
+    | { status: 'loading' }
+    | { status: 'authenticated'; user: UserProfile }
+    | { status: 'error'; message: string };
+
+function renderAuthUI(state: AuthState) {
+    switch (state.status) {
+        case 'idle':
+            return <LoginForm />;
+        case 'loading':
+            return <Spinner />;
+        case 'authenticated':
+            // TypeScript knows: state.user exists
+            return <Dashboard user={state.user} />;
+        case 'error':
+            // TypeScript knows: state.message exists
+            return <ErrorAlert message={state.message} />;
+    }
+}
+```
+
+### 13.7 Benefits Summary
+
+| Benefit | Description |
+|---------|-------------|
+| **Type Safety** | Compiler catches missing cases |
+| **Self-Documenting** | Types describe all possible states |
+| **No Null Checks** | No more `if (data?.user)` ambiguity |
+| **Exhaustive Handling** | `switch` statements require all cases |
+| **Refactoring Safety** | Adding new variants breaks compilation where unhandled |
 ```

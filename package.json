@@ -21,6 +21,7 @@
     "@oslojs/crypto": "^1.0.1",
     "@oslojs/encoding": "^1.1.0",
     "@pinia/nuxt": "^0.11.3",
+    "@tanstack/vue-query": "^5.92.1",
     "@upstash/redis": "^1.35.8",
     "ai": "^4.0.0",
     "drizzle-orm": "^0.36.0",

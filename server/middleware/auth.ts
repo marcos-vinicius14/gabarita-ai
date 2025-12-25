@@ -28,7 +28,6 @@ declare module 'h3' {
 export default defineEventHandler(async (event) => {
     const path = getRequestURL(event).pathname;
 
-    // Skip these auth routes (they handle their own auth)
     const publicAuthRoutes = [
         '/api/auth/login',
         '/api/auth/register',
@@ -40,7 +39,6 @@ export default defineEventHandler(async (event) => {
         return;
     }
 
-    // Skip non-API routes
     if (!path.startsWith('/api/')) {
         return;
     }
@@ -70,13 +68,11 @@ export default defineEventHandler(async (event) => {
             const result = await refreshTokens(session.refreshToken, { ip, userAgent });
 
             if (result.accessToken && result.refreshToken) {
-                // Update session with new tokens
                 await updateSession(sessionId, {
                     accessToken: result.accessToken,
                     refreshToken: result.refreshToken,
                 });
 
-                // Verify the new access token and set context
                 const payload = await verifyAccessToken(result.accessToken);
                 event.context.user = payload;
                 event.context.session = {

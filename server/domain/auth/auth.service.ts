@@ -198,7 +198,7 @@ export async function loginUser(
 
     return {
         success: true,
-        message: 'Login successful.',
+        message: 'Login realizado com sucesso. Seja bem-vindo!',
         data: {
             user: {
                 id: user.id,
