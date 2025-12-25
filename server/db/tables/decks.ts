@@ -1,6 +1,6 @@
 import { pgTable, pgEnum, text, timestamp, uuid, index } from 'drizzle-orm/pg-core';
 import { uuidv7 } from 'uuidv7';
-import { users } from './users';
+import { users } from '../../domain/auth/schema/users';
 
 // Enums para type-safety no banco de dados
 export const deckStatusEnum = pgEnum('deck_status', ['processing', 'ready', 'failed']);

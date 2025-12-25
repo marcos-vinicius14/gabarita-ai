@@ -1,27 +1,24 @@
 /**
- * Database connection using Neon WebSocket Pool.
+ * Database connection with environment-aware driver selection.
  * 
- * Optimized for Cloudflare Workers/Pages:
- * - WebSocket connection (stable on Cloudflare)
- * - Behaves like a standard Postgres client
- * - Bypasses tagged-template restriction of HTTP adapter
+ * - Development: Uses node-postgres (pg) for local Docker PostgreSQL
+ * - Production: Uses Neon WebSocket Pool for Cloudflare Workers/Pages
  */
 
-import { Pool } from '@neondatabase/serverless';
-import { drizzle } from 'drizzle-orm/neon-serverless';
+import { drizzle } from 'drizzle-orm/node-postgres';
+import pg from 'pg';
 import * as schema from '../db/schema';
 
 const config = useRuntimeConfig();
 const connString = config.databaseUrl || process.env.DATABASE_URL || '';
 
 if (!connString) {
-    console.error('[DB Error] DATABASE_URL is missing. Please check Cloudflare Environment Variables.');
-    throw new Error('DATABASE_URL is missing. Please check Cloudflare Environment Variables.');
+    console.error('[DB Error] DATABASE_URL is missing.');
+    throw new Error('DATABASE_URL is missing.');
 }
 
-console.log('[DB] Initializing Neon WebSocket Pool connection...');
+console.log('[DB] Initializing PostgreSQL connection...');
 
-// Use the Pool for WebSocket connection (Stable on Cloudflare)
-const pool = new Pool({ connectionString: connString });
+const pool = new pg.Pool({ connectionString: connString });
 
 export const db = drizzle(pool, { schema });

@@ -8,21 +8,27 @@ export default defineNuxtConfig({
     '@pinia/nuxt',
   ],
 
-  // Auto-import stores from the stores directory
   imports: {
     dirs: ['stores'],
   },
 
   runtimeConfig: {
+    databaseUrl: '',
     googleApiKey: '',
-    databaseUrl: process.env.DATABASE_URL,
-    redisUrl: process.env.REDIS_URL,
+    jwtSecret: process.env.JWT_SECRET,
+    upstashRedisUrl: '',
+    upstashRedisToken: '',
+
     public: {
       appName: 'Gabarita.ai'
     }
   },
 
   nitro: {
-    preset: 'cloudflare-pages'
-  }
+    preset: 'cloudflare-pages',
+    imports: {
+      // Exclude entire exceptions folder - import explicitly from ~/server/utils/exceptions
+      exclude: ['**/utils/exceptions/**'],
+    },
+  },
 })
