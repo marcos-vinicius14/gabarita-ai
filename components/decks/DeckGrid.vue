@@ -65,7 +65,7 @@ const hasDecks = computed(() => props.decks.length > 0);
 
     <!-- Deck Grid -->
     <div v-else class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
-        <DeckCard v-for="deck in decks" :key="deck.id" :deck="deck" @delete="emit('delete', $event)"
+        <DecksDeckCard v-for="deck in decks" :key="deck.id" :deck="deck" @delete="emit('delete', $event)"
             @study="emit('study', $event)" />
     </div>
 </template>

@@ -174,7 +174,7 @@ function handleDeckDeleted() {
                         <h2 class="text-lg sm:text-xl font-semibold">Seus Decks</h2>
                     </div>
 
-                    <DeckGrid :decks="decks" :is-loading="isDecksLoading" @create="openCreateModal"
+                    <DecksDeckGrid :decks="decks" :is-loading="isDecksLoading" @create="openCreateModal"
                         @delete="handleDeleteRequest" @study="handleStudy" />
                 </div>
             </div>
@@ -186,8 +186,8 @@ function handleDeckDeleted() {
             @click="openCreateModal" />
 
         <!-- Modals -->
-        <CreateDeckModal v-model="isCreateModalOpen" @created="handleDeckCreated" />
+        <DecksCreateDeckModal v-model="isCreateModalOpen" @created="handleDeckCreated" />
 
-        <DeleteDeckModal v-model="isDeleteModalOpen" :deck="deckToDelete" @deleted="handleDeckDeleted" />
+        <DecksDeleteDeckModal v-model="isDeleteModalOpen" :deck="deckToDelete" @deleted="handleDeckDeleted" />
     </div>
 </template>
