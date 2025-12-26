@@ -16,8 +16,11 @@ export default defineNuxtConfig({
     databaseUrl: '',
     googleApiKey: '',
     jwtSecret: process.env.JWT_SECRET,
-    upstashRedisUrl: '',
-    upstashRedisToken: '',
+    // Local Redis (Docker) - use REDIS_URL env var
+    redisUrl: process.env.REDIS_URL ?? '',
+    // Upstash Redis (Production)
+    upstashRedisUrl: process.env.UPSTASH_REDIS_URL ?? '',
+    upstashRedisToken: process.env.UPSTASH_REDIS_TOKEN ?? '',
 
     public: {
       appName: 'Gabarita.ai'
@@ -27,8 +30,19 @@ export default defineNuxtConfig({
   nitro: {
     preset: 'cloudflare-pages',
     imports: {
-      // Exclude entire exceptions folder - import explicitly from ~/server/utils/exceptions
-      exclude: ['**/utils/exceptions/**'],
+      // Exclude _internal folder - exceptions should be imported from ~/server/utils/exceptions
+      // Exclude session.ts to prevent conflict with h3's getSession/updateSession
+      exclude: [
+        '**/utils/exceptions/_internal/**',
+        '**/utils/auth/session.ts',
+      ],
     },
+    rollupConfig: {
+      external: ['pg-native'],
+    },
+  },
+
+  alias: {
+    'pg-native': 'unenv/runtime/mock/empty',
   },
 })

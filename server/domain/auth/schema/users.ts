@@ -26,6 +26,7 @@ export const users = pgTable('tb_users', {
     name: text('name'),
     passwordHash: text('password_hash'),
     role: userRoleEnum('role').default('free').notNull(),
+    trialExpiresAt: timestamp('trial_expires_at'),
     failedLoginAttempts: integer('failed_login_attempts').default(0).notNull(),
     lockedUntil: timestamp('locked_until'),
     emailVerified: timestamp('email_verified'),

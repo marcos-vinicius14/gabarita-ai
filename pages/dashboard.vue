@@ -1,10 +1,13 @@
 <script setup lang="ts">
 /**
- * Dashboard Page (TanStack Query)
+ * Dashboard Page
  * 
  * Protected page - requires authentication.
- * Uses useAuth composable with TanStack Query.
+ * Displays user's decks with full CRUD functionality.
  */
+
+import { useDecks } from '~/composables/useDecks';
+import type { DeckItem } from '~/types/decks';
 
 definePageMeta({
     layout: false,
@@ -14,18 +17,57 @@ useSeoMeta({
     title: 'Dashboard | Gabarita.ai',
 })
 
-const { user, isAuthenticated, isLoading, logout, userQuery } = useAuth()
+// Auth
+const { user, isAuthenticated, isLoading: isAuthLoading, logout, userQuery } = useAuth()
 const router = useRouter()
 
+// Redirect if not authenticated
 watch([() => userQuery.isSuccess.value, () => userQuery.data.value], ([isSuccess, data]) => {
     if (isSuccess && !data) {
         router.push('/login')
     }
 }, { immediate: true })
 
-async function handleLogout() {
+// Decks
+const { decks, deckCount, isLoading: isDecksLoading } = useDecks()
+
+// Modal state
+const isCreateModalOpen = ref(false)
+const isDeleteModalOpen = ref(false)
+const deckToDelete = ref<DeckItem | null>(null)
+
+// Computed
+const isLoading = computed(() => isAuthLoading.value || isDecksLoading.value)
+
+// Functions
+async function handleLogout(): Promise<void> {
     await logout()
     await router.push('/login')
+}
+
+function openCreateModal() {
+    isCreateModalOpen.value = true
+}
+
+function handleDeleteRequest(deckId: string) {
+    const deck = decks.value.find(d => d.id === deckId)
+    if (!deck) return
+
+    deckToDelete.value = deck
+    isDeleteModalOpen.value = true
+}
+
+function handleStudy(deckId: string) {
+    // TODO: Navigate to study page
+    router.push(`/study/${deckId}`)
+}
+
+function handleDeckCreated() {
+    // Modal handles success toast; just close
+}
+
+function handleDeckDeleted() {
+    deckToDelete.value = null
 }
 </script>
 
@@ -58,19 +100,29 @@ async function handleLogout() {
 
         <!-- Main Content -->
         <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8 lg:py-12">
-            <div v-if="isLoading" class="flex items-center justify-center py-16 sm:py-24">
+            <!-- Auth Loading -->
+            <div v-if="isAuthLoading" class="flex items-center justify-center py-16 sm:py-24">
                 <UIcon name="i-heroicons-arrow-path" class="w-6 h-6 sm:w-8 sm:h-8 animate-spin text-violet-500" />
             </div>
 
             <div v-else-if="user" class="space-y-6 sm:space-y-8">
                 <!-- Welcome -->
-                <div>
-                    <h1 class="text-xl sm:text-2xl lg:text-3xl font-bold mb-1 sm:mb-2">
-                        Olá, {{ user.name || 'Estudante' }}! 👋
-                    </h1>
-                    <p class="text-sm sm:text-base text-zinc-400">
-                        Bem-vindo ao seu painel de estudos.
-                    </p>
+                <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                    <div>
+                        <h1 class="text-xl sm:text-2xl lg:text-3xl font-bold mb-1 sm:mb-2">
+                            Olá, {{ user.name || 'Estudante' }}! 👋
+                        </h1>
+                        <p class="text-sm sm:text-base text-zinc-400">
+                            Bem-vindo ao seu painel de estudos.
+                        </p>
+                    </div>
+
+                    <!-- Create Button (Desktop) -->
+                    <UButton v-if="decks.length > 0" color="violet" size="md" class="hidden sm:flex"
+                        @click="openCreateModal">
+                        <UIcon name="i-heroicons-plus" class="w-4 h-4 mr-1.5" />
+                        Novo Deck
+                    </UButton>
                 </div>
 
                 <!-- Stats Cards -->
@@ -82,7 +134,7 @@ async function handleLogout() {
                                 <UIcon name="i-heroicons-document-text" class="w-5 h-5 sm:w-6 sm:h-6 text-violet-400" />
                             </div>
                             <div class="min-w-0">
-                                <p class="text-xl sm:text-2xl font-bold">0</p>
+                                <p class="text-xl sm:text-2xl font-bold">{{ deckCount }}</p>
                                 <p class="text-xs sm:text-sm text-zinc-400">Decks criados</p>
                             </div>
                         </div>
@@ -116,27 +168,26 @@ async function handleLogout() {
                     </div>
                 </div>
 
-                <!-- Empty State -->
-                <div
-                    class="bg-zinc-900/80 backdrop-blur-xl rounded-xl border border-zinc-800 p-6 sm:p-8 lg:p-12 text-center">
-                    <div
-                        class="w-12 h-12 sm:w-14 sm:h-14 lg:w-16 lg:h-16 rounded-2xl bg-violet-500/20 flex items-center justify-center mx-auto mb-4 sm:mb-6">
-                        <UIcon name="i-heroicons-plus" class="w-6 h-6 sm:w-7 sm:h-7 lg:w-8 lg:h-8 text-violet-400" />
+                <!-- Decks Section -->
+                <div class="space-y-4">
+                    <div v-if="decks.length > 0" class="flex items-center justify-between">
+                        <h2 class="text-lg sm:text-xl font-semibold">Seus Decks</h2>
                     </div>
-                    <h2 class="text-lg sm:text-xl font-bold mb-2">Crie seu primeiro deck</h2>
-                    <p class="text-sm sm:text-base text-zinc-400 mb-4 sm:mb-6 max-w-md mx-auto">
-                        Faça upload de um PDF ou digite um tema para gerar flashcards automaticamente com IA.
-                    </p>
-                    <UButton color="violet" size="md" class="sm:hidden">
-                        <UIcon name="i-heroicons-plus" class="w-4 h-4 mr-1.5" />
-                        Criar Deck
-                    </UButton>
-                    <UButton color="violet" size="lg" class="hidden sm:inline-flex">
-                        <UIcon name="i-heroicons-plus" class="w-5 h-5 mr-2" />
-                        Criar Deck
-                    </UButton>
+
+                    <DeckGrid :decks="decks" :is-loading="isDecksLoading" @create="openCreateModal"
+                        @delete="handleDeleteRequest" @study="handleStudy" />
                 </div>
             </div>
         </main>
+
+        <!-- FAB (Mobile) -->
+        <UButton v-if="user && decks.length > 0" color="violet" size="lg"
+            class="fixed bottom-6 right-6 sm:hidden rounded-full shadow-lg shadow-violet-500/25" icon="i-heroicons-plus"
+            @click="openCreateModal" />
+
+        <!-- Modals -->
+        <CreateDeckModal v-model="isCreateModalOpen" @created="handleDeckCreated" />
+
+        <DeleteDeckModal v-model="isDeleteModalOpen" :deck="deckToDelete" @deleted="handleDeckDeleted" />
     </div>
 </template>

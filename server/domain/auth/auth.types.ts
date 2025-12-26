@@ -15,6 +15,7 @@ export interface User {
     name: string | null;
     passwordHash: string | null;
     role: UserRole;
+    trialExpiresAt: Date | null;
     failedLoginAttempts: number;
     lockedUntil: Date | null;
     emailVerified: Date | null;

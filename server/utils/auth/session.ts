@@ -4,11 +4,15 @@
  * Server-side session management for BFF pattern.
  * Tokens are stored server-side, never exposed to the client.
  * 
- * - Development: In-memory Map (no persistence)
- * - Production: Redis (Upstash)
+ * Storage priority:
+ * 1. Upstash Redis (Production - via NUXT_UPSTASH_REDIS_URL)
+ * 2. Local Redis (Development - via REDIS_URL, e.g. Docker)
+ * 3. In-memory Map (Fallback - no persistence)
  */
 
-import { Redis } from '@upstash/redis';
+import { Redis as UpstashRedis } from '@upstash/redis';
+import IORedis from 'ioredis';
+import { useRuntimeConfig } from '#imports';
 import { generateRandomToken } from './tokens';
 
 export interface Session {
@@ -26,21 +30,110 @@ interface SessionData {
     refreshToken: string;
 }
 
+interface RedisAdapter {
+    get(key: string): Promise<string | null>;
+    set(key: string, value: string, ttlSeconds: number): Promise<void>;
+    del(...keys: string[]): Promise<void>;
+    sadd(key: string, member: string): Promise<void>;
+    smembers(key: string): Promise<string[]>;
+    srem(key: string, member: string): Promise<void>;
+    expire(key: string, seconds: number): Promise<void>;
+}
+
 const SESSION_TTL_SECONDS = 60 * 60 * 24 * 7; // 7 days
 
 const memoryStore = new Map<string, Session>();
 
-function getRedisClient(): Redis | null {
-    const config = useRuntimeConfig();
+let redisAdapter: RedisAdapter | null | undefined = undefined;
 
-    if (!config.upstashRedisUrl || !config.upstashRedisToken) {
-        return null;
+function createUpstashAdapter(url: string, token: string): RedisAdapter {
+    const client = new UpstashRedis({ url, token });
+
+    return {
+        async get(key: string) {
+            const data = await client.get<string>(key);
+            return data;
+        },
+        async set(key: string, value: string, ttlSeconds: number) {
+            await client.set(key, value, { ex: ttlSeconds });
+        },
+        async del(...keys: string[]) {
+            await client.del(...keys);
+        },
+        async sadd(key: string, member: string) {
+            await client.sadd(key, member);
+        },
+        async smembers(key: string) {
+            return await client.smembers(key);
+        },
+        async srem(key: string, member: string) {
+            await client.srem(key, member);
+        },
+        async expire(key: string, seconds: number) {
+            await client.expire(key, seconds);
+        },
+    };
+}
+
+function createIORedisAdapter(url: string): RedisAdapter {
+    const client = new IORedis(url);
+
+    return {
+        async get(key: string) {
+            return await client.get(key);
+        },
+        async set(key: string, value: string, ttlSeconds: number) {
+            await client.set(key, value, 'EX', ttlSeconds);
+        },
+        async del(...keys: string[]) {
+            await client.del(...keys);
+        },
+        async sadd(key: string, member: string) {
+            await client.sadd(key, member);
+        },
+        async smembers(key: string) {
+            return await client.smembers(key);
+        },
+        async srem(key: string, member: string) {
+            await client.srem(key, member);
+        },
+        async expire(key: string, seconds: number) {
+            await client.expire(key, seconds);
+        },
+    };
+}
+
+function getRedisAdapter(): RedisAdapter | null {
+    if (redisAdapter !== undefined) {
+        return redisAdapter;
     }
 
-    return new Redis({
-        url: config.upstashRedisUrl as string,
-        token: config.upstashRedisToken as string,
-    });
+    try {
+        const config = useRuntimeConfig();
+
+        if (config.upstashRedisUrl && config.upstashRedisToken) {
+            console.log('[Session] Using Upstash Redis (production).');
+            redisAdapter = createUpstashAdapter(
+                config.upstashRedisUrl as string,
+                config.upstashRedisToken as string
+            );
+            return redisAdapter;
+        }
+
+        if (config.redisUrl) {
+            console.log('[Session] Using local Redis (development).');
+            redisAdapter = createIORedisAdapter(config.redisUrl as string);
+            return redisAdapter;
+        }
+
+        console.warn('[Session] No Redis configured. Using in-memory store.');
+        redisAdapter = null;
+        return null;
+    } catch (error) {
+        console.warn('[Session] Failed to initialize Redis:', error);
+        redisAdapter = null;
+        return null;
+    }
 }
 
 function generateSessionId(): string {
@@ -69,13 +162,13 @@ export async function createSession(data: SessionData): Promise<string> {
         createdAt: now,
     };
 
-    const redis = getRedisClient();
+    const redis = getRedisAdapter();
 
     if (redis) {
         const key = getSessionKey(sessionId);
         const userKey = getUserSessionsKey(data.userId);
 
-        await redis.set(key, JSON.stringify(session), { ex: SESSION_TTL_SECONDS });
+        await redis.set(key, JSON.stringify(session), SESSION_TTL_SECONDS);
         await redis.sadd(userKey, sessionId);
         await redis.expire(userKey, SESSION_TTL_SECONDS);
     } else {
@@ -86,11 +179,11 @@ export async function createSession(data: SessionData): Promise<string> {
 }
 
 export async function getSession(sessionId: string): Promise<Session | null> {
-    const redis = getRedisClient();
+    const redis = getRedisAdapter();
 
     if (redis) {
         const key = getSessionKey(sessionId);
-        const data = await redis.get<string>(key);
+        const data = await redis.get(key);
 
         if (!data) return null;
 
@@ -126,7 +219,7 @@ export async function updateSession(
         ...data,
     };
 
-    const redis = getRedisClient();
+    const redis = getRedisAdapter();
 
     if (redis) {
         const key = getSessionKey(sessionId);
@@ -135,7 +228,7 @@ export async function updateSession(
         );
 
         if (remainingTtl > 0) {
-            await redis.set(key, JSON.stringify(updatedSession), { ex: remainingTtl });
+            await redis.set(key, JSON.stringify(updatedSession), remainingTtl);
         }
     } else {
         memoryStore.set(sessionId, updatedSession);
@@ -149,7 +242,7 @@ export async function deleteSession(sessionId: string): Promise<boolean> {
 
     if (!session) return false;
 
-    const redis = getRedisClient();
+    const redis = getRedisAdapter();
 
     if (redis) {
         const key = getSessionKey(sessionId);
@@ -165,7 +258,7 @@ export async function deleteSession(sessionId: string): Promise<boolean> {
 }
 
 export async function deleteUserSessions(userId: string): Promise<number> {
-    const redis = getRedisClient();
+    const redis = getRedisAdapter();
 
     if (redis) {
         const userKey = getUserSessionsKey(userId);
