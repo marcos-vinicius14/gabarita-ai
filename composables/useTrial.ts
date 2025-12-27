@@ -53,6 +53,7 @@ export function useTrial() {
     const trialQuery = useQuery({
         queryKey: trialKeys.status(),
         queryFn: fetchTrialStatus,
+        enabled: import.meta.client, // Only run on client-side
         select: (data) => data.data,
         retry: false,
     });

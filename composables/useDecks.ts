@@ -52,6 +52,7 @@ export function useDecks() {
     const decksQuery = useQuery({
         queryKey: deckKeys.list(),
         queryFn: fetchDecks,
+        enabled: import.meta.client, // Only run on client-side
         select: (data) => {
             if (data.success) {
                 return data.data.decks;

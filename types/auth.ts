@@ -14,6 +14,7 @@ export interface UserProfile {
     email: string
     name: string | null
     role: 'free' | 'trial' | 'pro' | 'admin'
+    trialExpiresAt: string | null
     emailVerified: boolean
     createdAt: string
 }

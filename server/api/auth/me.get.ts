@@ -43,6 +43,7 @@ export default defineEventHandler(async (event) => {
                     email: user.email,
                     name: user.name,
                     role: user.role,
+                    trialExpiresAt: user.trialExpiresAt?.toISOString() ?? null,
                     emailVerified: !!user.emailVerified,
                     createdAt: user.createdAt,
                 },
