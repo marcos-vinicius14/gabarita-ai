@@ -17,7 +17,7 @@ import 'dotenv/config';
 
 import { Worker, type Job } from 'bullmq';
 import { PDFParse } from 'pdf-parse';
-import { generateText } from 'ai';
+import { generateText, embed } from 'ai';
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { db } from '../utils/db';
 import { cards } from '../db/tables/cards';
@@ -46,9 +46,7 @@ interface GeneratedCard {
     back: string;
 }
 
-/**
- * Convert technical error messages to user-friendly Portuguese messages
- */
+
 function getUserFriendlyErrorMessage(error: Error): string {
     const message = error.message.toLowerCase();
 
@@ -76,7 +74,6 @@ function getUserFriendlyErrorMessage(error: Error): string {
         return 'O processamento demorou muito. Tente com um PDF menor.';
     }
 
-    // Default user-friendly message
     return 'Ocorreu um erro ao processar o PDF. Por favor, tente novamente.';
 }
 
@@ -151,22 +148,17 @@ Não inclua explicações, markdown ou código, apenas o JSON puro.`;
         }
     }
 
-    // Try to find JSON array pattern
     let jsonArrayMatch = jsonText.match(/\[[\s\S]*\]/);
 
-    // If no complete array found, try to extract partial array and complete it
     if (!jsonArrayMatch) {
         console.log('[Worker] No complete JSON array, attempting to extract partial...');
 
-        // Look for array start and extract valid JSON objects
         const arrayStart = jsonText.indexOf('[');
         if (arrayStart !== -1) {
             let partialArray = jsonText.substring(arrayStart);
 
-            // Try to find the last complete JSON object (ends with })
             const lastCompleteObject = partialArray.lastIndexOf('}');
             if (lastCompleteObject !== -1) {
-                // Take content up to and including the last complete object, then close the array
                 partialArray = partialArray.substring(0, lastCompleteObject + 1) + ']';
                 console.log('[Worker] Reconstructed array from partial response');
                 jsonArrayMatch = [partialArray];
@@ -204,16 +196,53 @@ Não inclua explicações, markdown ou código, apenas o JSON puro.`;
     );
 }
 
+/**
+ * Generate embedding for text using Gemini embedding model
+ * Uses Matryoshka representation with 768 dimensions to match schema
+ */
+async function generateEmbedding(text: string): Promise<number[]> {
+    const googleApiKey = process.env.NUXT_GOOGLE_API_KEY || process.env.GOOGLE_API_KEY;
+
+    if (!googleApiKey) {
+        throw new Error('GOOGLE_API_KEY is not configured');
+    }
+
+    const google = createGoogleGenerativeAI({
+        apiKey: googleApiKey,
+    });
+
+    const { embedding } = await embed({
+        model: google.textEmbeddingModel('gemini-embedding-001', {
+            outputDimensionality: 768,
+        }),
+        value: text,
+    });
+
+    return embedding;
+}
+
 async function insertCards(deckId: string, generatedCards: GeneratedCard[]) {
     if (generatedCards.length === 0) {
         return 0;
     }
 
-    const cardValues = generatedCards.map(card => ({
-        deckId,
-        front: card.front.trim(),
-        back: card.back.trim(),
-    }));
+    console.log(`[Worker] Generating embeddings for ${generatedCards.length} cards...`);
+
+    const cardValues = await Promise.all(
+        generatedCards.map(async (card) => {
+            const backText = card.back.trim();
+            const embedding = await generateEmbedding(backText);
+
+            return {
+                deckId,
+                front: card.front.trim(),
+                back: backText,
+                embedding,
+            };
+        })
+    );
+
+    console.log(`[Worker] Successfully generated embeddings`);
 
     await (db as any).insert(cards).values(cardValues);
 
@@ -236,7 +265,9 @@ async function processDeckJob(job: Job<DeckGenerationJobData>): Promise<void> {
         const pdfBuffer = await downloadBufferFromR2(r2Key);
         console.log(`[Worker] Downloaded ${pdfBuffer.length} bytes`);
         console.log(`[Worker] Extracting text from PDF`);
+
         const text = await extractTextFromPdf(pdfBuffer);
+
         console.log(`[Worker] Extracted ${text.length} characters`);
 
         if (text.trim().length < 100) {
@@ -268,7 +299,6 @@ async function processDeckJob(job: Job<DeckGenerationJobData>): Promise<void> {
     } catch (error: any) {
         console.error(`[Worker] Job ${job.id} failed:`, error);
 
-        // Store user-friendly error message for the UI
         const userMessage = getUserFriendlyErrorMessage(error);
         await updateDeckStatus(deckId, 'failed', userMessage);
 
