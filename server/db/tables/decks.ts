@@ -12,6 +12,8 @@ export const decks = pgTable('tb_decks', {
     topic: text('topic').notNull(),
     sourceType: deckSourceTypeEnum('source_type').default('topic').notNull(),
     status: deckStatusEnum('status').default('processing').notNull(),
+    r2Key: text('r2_key'),
+    errorMessage: text('error_message'),
     createdAt: timestamp('created_at').defaultNow(),
     updatedAt: timestamp('updated_at').defaultNow(),
 }, (table) => [
