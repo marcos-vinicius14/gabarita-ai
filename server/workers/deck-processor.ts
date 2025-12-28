@@ -46,6 +46,39 @@ interface GeneratedCard {
     back: string;
 }
 
+/**
+ * Convert technical error messages to user-friendly Portuguese messages
+ */
+function getUserFriendlyErrorMessage(error: Error): string {
+    const message = error.message.toLowerCase();
+
+    if (message.includes('pdf does not contain enough text')) {
+        return 'O PDF não contém texto suficiente para gerar flashcards. Tente um documento com mais conteúdo.';
+    }
+
+    if (message.includes('no flashcards could be generated')) {
+        return 'Não foi possível gerar flashcards a partir deste PDF. O conteúdo pode não ser adequado para estudo.';
+    }
+
+    if (message.includes('failed to parse ai response')) {
+        return 'A IA não conseguiu processar o documento corretamente. Por favor, tente novamente.';
+    }
+
+    if (message.includes('api key') || message.includes('not configured')) {
+        return 'Erro de configuração do servidor. Entre em contato com o suporte.';
+    }
+
+    if (message.includes('r2') || message.includes('storage') || message.includes('download')) {
+        return 'Erro ao acessar o arquivo. Por favor, tente fazer o upload novamente.';
+    }
+
+    if (message.includes('timeout') || message.includes('timed out')) {
+        return 'O processamento demorou muito. Tente com um PDF menor.';
+    }
+
+    // Default user-friendly message
+    return 'Ocorreu um erro ao processar o PDF. Por favor, tente novamente.';
+}
 
 async function extractTextFromPdf(buffer: Buffer): Promise<string> {
     const pdfParse = new PDFParse({ data: buffer });
@@ -92,7 +125,7 @@ ${text.substring(0, 15000)}
 Retorne APENAS um array JSON válido com os flashcards no formato:
 [{"front": "pergunta", "back": "resposta"}, ...]
 
-Não inclua explicações, apenas o JSON.`;
+Não inclua explicações, markdown ou código, apenas o JSON puro.`;
 
     const result = await generateText({
         model: google('gemini-2.5-flash'),
@@ -101,17 +134,67 @@ Não inclua explicações, apenas o JSON.`;
         maxTokens: 4000,
     });
 
-    const jsonMatch = result.text.match(/\[[\s\S]*\]/);
-    if (!jsonMatch) {
-        console.error('[Worker] Failed to parse AI response:', result.text);
-        throw new Error('Failed to parse AI response as JSON');
+    let jsonText = result.text.trim();
+
+    console.log('[Worker] Raw AI response length:', jsonText.length);
+    console.log('[Worker] Raw AI response preview:', jsonText.substring(0, 500));
+
+    const completeCodeBlockMatch = jsonText.match(/```(?:json)?\s*([\s\S]*?)```/);
+    if (completeCodeBlockMatch) {
+        jsonText = completeCodeBlockMatch[1].trim();
+        console.log('[Worker] Extracted from complete code block');
+    } else {
+        const incompleteCodeBlockMatch = jsonText.match(/```(?:json)?\s*([\s\S]*)/);
+        if (incompleteCodeBlockMatch) {
+            jsonText = incompleteCodeBlockMatch[1].trim();
+            console.log('[Worker] Extracted from incomplete code block (truncated response)');
+        }
     }
 
-    const flashcards = JSON.parse(jsonMatch[0]) as GeneratedCard[];
+    // Try to find JSON array pattern
+    let jsonArrayMatch = jsonText.match(/\[[\s\S]*\]/);
+
+    // If no complete array found, try to extract partial array and complete it
+    if (!jsonArrayMatch) {
+        console.log('[Worker] No complete JSON array, attempting to extract partial...');
+
+        // Look for array start and extract valid JSON objects
+        const arrayStart = jsonText.indexOf('[');
+        if (arrayStart !== -1) {
+            let partialArray = jsonText.substring(arrayStart);
+
+            // Try to find the last complete JSON object (ends with })
+            const lastCompleteObject = partialArray.lastIndexOf('}');
+            if (lastCompleteObject !== -1) {
+                // Take content up to and including the last complete object, then close the array
+                partialArray = partialArray.substring(0, lastCompleteObject + 1) + ']';
+                console.log('[Worker] Reconstructed array from partial response');
+                jsonArrayMatch = [partialArray];
+            }
+        }
+    }
+
+    if (!jsonArrayMatch) {
+        console.error('[Worker] No JSON array found in response:', jsonText.substring(0, 1000));
+        throw new Error('Failed to parse AI response as JSON - no array found');
+    }
+
+    jsonText = jsonArrayMatch[0];
+
+    let flashcards: GeneratedCard[];
+    try {
+        flashcards = JSON.parse(jsonText) as GeneratedCard[];
+    } catch (parseError) {
+        console.error('[Worker] JSON parse error:', parseError);
+        console.error('[Worker] Attempted to parse:', jsonText.substring(0, 500));
+        throw new Error('Failed to parse AI response as JSON - invalid JSON syntax');
+    }
 
     if (!Array.isArray(flashcards)) {
         throw new Error('AI response is not an array');
     }
+
+    console.log('[Worker] Successfully parsed', flashcards.length, 'flashcards from AI');
 
     return flashcards.filter(card =>
         typeof card.front === 'string' &&
@@ -185,11 +268,9 @@ async function processDeckJob(job: Job<DeckGenerationJobData>): Promise<void> {
     } catch (error: any) {
         console.error(`[Worker] Job ${job.id} failed:`, error);
 
-        await updateDeckStatus(
-            deckId,
-            'failed',
-            error.message || 'Unknown error during processing'
-        );
+        // Store user-friendly error message for the UI
+        const userMessage = getUserFriendlyErrorMessage(error);
+        await updateDeckStatus(deckId, 'failed', userMessage);
 
         throw error;
     }

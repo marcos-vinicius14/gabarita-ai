@@ -68,8 +68,13 @@ function handleDeleteRequest(deckId: string) {
 }
 
 function handleStudy(deckId: string) {
-    // TODO: Navigate to study page
-    router.push(`/study/${deckId}`)
+    // TODO: Implement dedicated study session page
+    // For now, navigate to deck detail where user can start studying
+    router.push(`/dashboard/decks/${deckId}`)
+}
+
+function handleDeckClick(deckId: string) {
+    router.push(`/dashboard/decks/${deckId}`)
 }
 
 function handleDeckCreated() {
@@ -223,7 +228,7 @@ function handleDeckDeleted() {
                     </div>
 
                     <DecksDeckGrid :decks="decks" :is-loading="isDecksLoading" @create="openCreateModal"
-                        @delete="handleDeleteRequest" @study="handleStudy" />
+                        @delete="handleDeleteRequest" @study="handleStudy" @click="handleDeckClick" />
                 </div>
             </div>
         </main>
