@@ -72,9 +72,7 @@ function handleDeleteRequest(deckId: string) {
 }
 
 function handleStudy(deckId: string) {
-    // TODO: Implement dedicated study session page
-    // For now, navigate to deck detail where user can start studying
-    router.push(`/dashboard/decks/${deckId}`)
+    router.push(`/dashboard/study/${deckId}`)
 }
 
 function handleDeckClick(deckId: string) {
