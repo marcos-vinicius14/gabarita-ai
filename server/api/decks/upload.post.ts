@@ -12,7 +12,7 @@
 import Busboy from 'busboy';
 import { Readable } from 'stream';
 import { uuidv7 } from 'uuidv7';
-import { uploadStreamToR2, generateR2Key } from '~/server/utils/storage';
+import { uploadStreamToR2, generateR2Key, deleteFromR2 } from '~/server/utils/storage';
 import { addDeckGenerationJob } from '~/server/utils/queue';
 import { createDeckFromUpload, countDecksByUser } from '~/server/domain/decks/deck.repository';
 import { findUserById } from '~/server/domain/auth/auth.repository';
@@ -30,23 +30,22 @@ import {
     ForbiddenException,
 } from '~/server/utils/exceptions';
 
+const UPLOAD_TIMEOUT_MS = 30_000;
+
 export default defineEventHandler(async (event) => {
     try {
-        // 1. Authentication check
         const sessionUser = event.context.user;
 
         if (!sessionUser) {
             throw new AuthenticationRequiredException();
         }
 
-        // 2. Get full user for role/trial check
         const user = await findUserById(sessionUser.sub);
 
         if (!user) {
             throw new AuthenticationRequiredException();
         }
 
-        // 3. Check deck limits
         const currentCount = await countDecksByUser(user.id);
         const effectiveRole = getEffectiveRole({
             id: user.id,
@@ -63,7 +62,6 @@ export default defineEventHandler(async (event) => {
             );
         }
 
-        // 4. Get the raw request (Node.js IncomingMessage)
         const req = event.node.req;
         const contentType = req.headers['content-type'];
 
@@ -74,32 +72,40 @@ export default defineEventHandler(async (event) => {
             );
         }
 
-        // 5. Process upload with busboy
         const result = await new Promise<{
             deck: Awaited<ReturnType<typeof createDeckFromUpload>>;
             jobId: string;
         }>((resolve, reject) => {
+            // Timeout for entire upload process
+            const timeoutId = setTimeout(() => {
+                req.destroy();
+                reject(new BadRequestException(
+                    'Upload expirou. Tente novamente com uma conexão mais rápida.',
+                    { code: 'UPLOAD_TIMEOUT' }
+                ));
+            }, UPLOAD_TIMEOUT_MS);
+
             const busboy = Busboy({
                 headers: req.headers,
                 limits: {
                     fileSize: MAX_PDF_SIZE_BYTES,
-                    files: 1, // Only accept one file
+                    files: 1,
                 },
             });
 
             let fileProcessed = false;
             let uploadError: Error | null = null;
 
+            const clearUploadTimeout = () => clearTimeout(timeoutId);
+
             busboy.on('file', async (fieldname, fileStream, info) => {
                 const { filename, mimeType } = info;
 
-                // Validate field name
                 if (fieldname !== 'file') {
-                    fileStream.resume(); // Drain the stream
+                    fileStream.resume();
                     return;
                 }
 
-                // Validate MIME type
                 if (!ALLOWED_PDF_MIME_TYPES.includes(mimeType as any)) {
                     fileStream.resume();
                     uploadError = new BadRequestException(
@@ -109,7 +115,6 @@ export default defineEventHandler(async (event) => {
                     return;
                 }
 
-                // Validate filename
                 if (!filename || !filename.toLowerCase().endsWith('.pdf')) {
                     fileStream.resume();
                     uploadError = new BadRequestException(
@@ -120,6 +125,8 @@ export default defineEventHandler(async (event) => {
                 }
 
                 fileProcessed = true;
+
+                let uploadedR2Key: string | null = null;
 
                 try {
                     const deckId = uuidv7();
@@ -146,6 +153,8 @@ export default defineEventHandler(async (event) => {
                         mimeType
                     );
 
+                    uploadedR2Key = r2Key;
+
                     if (fileTooLarge) {
                         throw new BadRequestException(
                             `Arquivo muito grande. Máximo permitido: ${MAX_PDF_SIZE_BYTES / 1024 / 1024}MB`,
@@ -167,11 +176,22 @@ export default defineEventHandler(async (event) => {
 
                     console.log(`[Upload] Job queued: ${job.id}`);
 
+                    clearUploadTimeout();
                     resolve({
                         deck,
                         jobId: job.id || deck.id,
                     });
                 } catch (err) {
+                    if (uploadedR2Key) {
+                        console.log(`[Upload] Cleaning up orphaned file: ${uploadedR2Key}`);
+                        try {
+                            await deleteFromR2(uploadedR2Key);
+                            console.log(`[Upload] Orphaned file deleted: ${uploadedR2Key}`);
+                        } catch (cleanupErr) {
+                            console.error(`[Upload] Failed to cleanup orphaned file:`, cleanupErr);
+                        }
+                    }
+                    clearUploadTimeout();
                     reject(err);
                 }
             });
@@ -184,16 +204,19 @@ export default defineEventHandler(async (event) => {
             });
 
             busboy.on('error', (err) => {
+                clearUploadTimeout();
                 reject(err);
             });
 
             busboy.on('finish', () => {
                 if (uploadError) {
+                    clearUploadTimeout();
                     reject(uploadError);
                     return;
                 }
 
                 if (!fileProcessed) {
+                    clearUploadTimeout();
                     reject(new BadRequestException(
                         'Nenhum arquivo PDF foi enviado. Use o campo "file".',
                         { code: 'NO_FILE_UPLOADED' }
@@ -201,11 +224,10 @@ export default defineEventHandler(async (event) => {
                 }
             });
 
-            // Pipe the request to busboy
             req.pipe(busboy);
         });
 
-        setResponseStatus(event, 202); // Accepted (processing in background)
+        setResponseStatus(event, 202);
         return {
             success: true,
             message: 'Upload recebido. Processando PDF...',
