@@ -28,15 +28,14 @@ export default defineNuxtConfig({
     r2BucketName: process.env.R2_BUCKET_NAME ?? '',
 
     public: {
-      appName: 'Gabarita.ai'
+      appName: 'Gabarita.ai',
+      wsUrl: process.env.NUXT_PUBLIC_WS_URL ?? 'ws://localhost:3002',
     }
   },
 
   nitro: {
     preset: 'node-server',
     imports: {
-      // Exclude _internal folder - exceptions should be imported from ~/server/utils/exceptions
-      // Exclude session.ts to prevent conflict with h3's getSession/updateSession
       exclude: [
         '**/utils/exceptions/_internal/**',
         '**/utils/auth/session.ts',

@@ -24,6 +24,7 @@ import { cards } from '../db/tables/cards';
 import { downloadBufferFromR2, deleteFromR2 } from '../utils/storage';
 import { updateDeckStatus, getDeckById } from '../domain/decks/deck.repository';
 import { QUEUE_NAMES, type DeckGenerationJobData } from '../utils/queue';
+import { publishDeckStatus, closePublisher } from '../utils/pubsub';
 
 // Redis connection for the worker
 function getRedisConnection() {
@@ -262,10 +263,13 @@ async function processDeckJob(job: Job<DeckGenerationJobData>): Promise<void> {
         }
 
         console.log(`[Worker] Downloading from R2: ${r2Key}`);
+        await publishDeckStatus(deckId, userId, 'processing', { progress: 'Baixando arquivo...' });
+
         const pdfBuffer = await downloadBufferFromR2(r2Key);
         console.log(`[Worker] Downloaded ${pdfBuffer.length} bytes`);
         console.log(`[Worker] Extracting text from PDF`);
 
+        await publishDeckStatus(deckId, userId, 'processing', { progress: 'Extraindo texto do PDF...' });
         const text = await extractTextFromPdf(pdfBuffer);
 
         console.log(`[Worker] Extracted ${text.length} characters`);
@@ -275,6 +279,8 @@ async function processDeckJob(job: Job<DeckGenerationJobData>): Promise<void> {
         }
 
         console.log(`[Worker] Generating flashcards with AI`);
+        await publishDeckStatus(deckId, userId, 'processing', { progress: 'Gerando flashcards com IA...' });
+
         const flashcards = await generateFlashcardsFromText(
             text,
             deck.topic,
@@ -287,10 +293,13 @@ async function processDeckJob(job: Job<DeckGenerationJobData>): Promise<void> {
         }
 
         console.log(`[Worker] Inserting cards into database`);
+        await publishDeckStatus(deckId, userId, 'processing', { progress: 'Salvando flashcards...' });
+
         const insertedCount = await insertCards(deckId, flashcards);
         console.log(`[Worker] Inserted ${insertedCount} cards`);
 
         await updateDeckStatus(deckId, 'ready');
+        await publishDeckStatus(deckId, userId, 'ready');
         console.log(`[Worker] Deck ${deckId} marked as ready`);
 
         await deleteFromR2(r2Key);
@@ -301,6 +310,7 @@ async function processDeckJob(job: Job<DeckGenerationJobData>): Promise<void> {
 
         const userMessage = getUserFriendlyErrorMessage(error);
         await updateDeckStatus(deckId, 'failed', userMessage);
+        await publishDeckStatus(deckId, userId, 'failed', { errorMessage: userMessage });
 
         throw error;
     }

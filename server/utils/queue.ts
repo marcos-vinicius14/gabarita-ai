@@ -101,7 +101,7 @@ export async function addDeckGenerationJob(jobData: DeckGenerationJobData): Prom
         `process-deck-${jobData.deckId}`,
         jobData,
         {
-            jobId: jobData.deckId, // Use deckId as jobId to prevent duplicates
+            jobId: jobData.deckId,
         }
     );
 

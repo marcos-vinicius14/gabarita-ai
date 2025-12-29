@@ -122,11 +122,9 @@ export default defineEventHandler(async (event) => {
                 fileProcessed = true;
 
                 try {
-                    // Generate deck ID early so we can use it in the R2 key
                     const deckId = uuidv7();
                     const r2Key = generateR2Key(user.id, deckId, filename);
 
-                    // Track file size (for validation)
                     let totalBytes = 0;
                     let fileTooLarge = false;
 
@@ -138,10 +136,8 @@ export default defineEventHandler(async (event) => {
                         }
                     });
 
-                    // Convert busboy stream to Readable for our upload function
                     const readableStream = Readable.from(fileStream);
 
-                    // Upload to R2 with gzip compression
                     console.log(`[Upload] Starting upload for ${filename} (user: ${user.id})`);
 
                     const uploadResult = await uploadStreamToR2(
@@ -159,12 +155,9 @@ export default defineEventHandler(async (event) => {
 
                     console.log(`[Upload] R2 upload complete: ${r2Key}`);
 
-                    // Create deck in database
                     const deck = await createDeckFromUpload(user.id, filename, r2Key);
 
                     console.log(`[Upload] Deck created: ${deck.id}`);
-
-                    // Add job to queue
                     const job = await addDeckGenerationJob({
                         deckId: deck.id,
                         userId: user.id,

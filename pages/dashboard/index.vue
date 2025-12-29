@@ -35,6 +35,10 @@ const { decks, deckCount, isLoading: isDecksLoading } = useDecks()
 // Trial
 const { isOnTrial, daysRemaining, effectiveRole, startTrial, startTrialMutation } = useTrial()
 
+// WebSocket for real-time status updates
+const userId = computed(() => user.value?.id)
+useWebSocket({ userId })
+
 // Computed: Show trial CTA if user is free and hasn't used trial
 const canStartTrial = computed(() => {
     if (!user.value) return false
