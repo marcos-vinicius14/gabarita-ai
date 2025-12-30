@@ -1,17 +1,14 @@
 /**
  * Session Store
- * 
+ *
  * Server-side session management for BFF pattern.
  * Tokens are stored server-side, never exposed to the client.
- * 
- * Storage priority:
- * 1. Upstash Redis (Production - via NUXT_UPSTASH_REDIS_URL)
- * 2. Local Redis (Development - via REDIS_URL, e.g. Docker)
- * 3. In-memory Map (Fallback - no persistence)
+ *
+ * Storage: PostgreSQL (Postgres Everything approach)
+ * Falls back to in-memory Map if database is not available.
  */
 
-import { Redis as UpstashRedis } from '@upstash/redis';
-import IORedis from 'ioredis';
+import { Pool } from 'pg';
 import { useRuntimeConfig } from '#imports';
 import { generateRandomToken } from './tokens';
 
@@ -30,122 +27,91 @@ interface SessionData {
     refreshToken: string;
 }
 
-interface RedisAdapter {
-    get(key: string): Promise<string | null>;
-    set(key: string, value: string, ttlSeconds: number): Promise<void>;
-    del(...keys: string[]): Promise<void>;
-    sadd(key: string, member: string): Promise<void>;
-    smembers(key: string): Promise<string[]>;
-    srem(key: string, member: string): Promise<void>;
-    expire(key: string, seconds: number): Promise<void>;
-}
-
 const SESSION_TTL_SECONDS = 60 * 60 * 24 * 7; // 7 days
 
 const memoryStore = new Map<string, Session>();
 
-let redisAdapter: RedisAdapter | null | undefined = undefined;
+let pgPool: Pool | null | undefined = undefined;
+let isTableInitialized = false;
 
-function createUpstashAdapter(url: string, token: string): RedisAdapter {
-    const client = new UpstashRedis({ url, token });
+/**
+ * Get database URL
+ */
+function getDatabaseUrl(): string | null {
+    try {
+        const config = useRuntimeConfig();
+        if (config.databaseUrl) {
+            return config.databaseUrl as string;
+        }
+    } catch {
+        // Fall back to env vars
+    }
 
-    return {
-        async get(key: string) {
-            const data = await client.get<string>(key);
-            return data;
-        },
-        async set(key: string, value: string, ttlSeconds: number) {
-            await client.set(key, value, { ex: ttlSeconds });
-        },
-        async del(...keys: string[]) {
-            await client.del(...keys);
-        },
-        async sadd(key: string, member: string) {
-            await client.sadd(key, member);
-        },
-        async smembers(key: string) {
-            return await client.smembers(key);
-        },
-        async srem(key: string, member: string) {
-            await client.srem(key, member);
-        },
-        async expire(key: string, seconds: number) {
-            await client.expire(key, seconds);
-        },
-    };
+    return process.env.DATABASE_URL || null;
 }
 
-function createIORedisAdapter(url: string): RedisAdapter {
-    const client = new IORedis(url);
+/**
+ * Initialize PostgreSQL pool for sessions
+ */
+function getPool(): Pool | null {
+    if (pgPool !== undefined) {
+        return pgPool;
+    }
 
-    return {
-        async get(key: string) {
-            return await client.get(key);
-        },
-        async set(key: string, value: string, ttlSeconds: number) {
-            await client.set(key, value, 'EX', ttlSeconds);
-        },
-        async del(...keys: string[]) {
-            await client.del(...keys);
-        },
-        async sadd(key: string, member: string) {
-            await client.sadd(key, member);
-        },
-        async smembers(key: string) {
-            return await client.smembers(key);
-        },
-        async srem(key: string, member: string) {
-            await client.srem(key, member);
-        },
-        async expire(key: string, seconds: number) {
-            await client.expire(key, seconds);
-        },
-    };
-}
-
-function getRedisAdapter(): RedisAdapter | null {
-    if (redisAdapter !== undefined) {
-        return redisAdapter;
+    const dbUrl = getDatabaseUrl();
+    if (!dbUrl) {
+        console.warn('[Session] No DATABASE_URL configured. Using in-memory store.');
+        pgPool = null;
+        return null;
     }
 
     try {
-        const config = useRuntimeConfig();
+        pgPool = new Pool({
+            connectionString: dbUrl,
+            max: 5,
+        });
 
-        if (config.upstashRedisUrl && config.upstashRedisToken) {
-            console.log('[Session] Using Upstash Redis (production).');
-            redisAdapter = createUpstashAdapter(
-                config.upstashRedisUrl as string,
-                config.upstashRedisToken as string
-            );
-            return redisAdapter;
-        }
-
-        if (config.redisUrl) {
-            console.log('[Session] Using local Redis (development).');
-            redisAdapter = createIORedisAdapter(config.redisUrl as string);
-            return redisAdapter;
-        }
-
-        console.warn('[Session] No Redis configured. Using in-memory store.');
-        redisAdapter = null;
-        return null;
+        console.log('[Session] Using PostgreSQL for session storage.');
+        return pgPool;
     } catch (error) {
-        console.warn('[Session] Failed to initialize Redis:', error);
-        redisAdapter = null;
+        console.warn('[Session] Failed to create PostgreSQL pool:', error);
+        pgPool = null;
         return null;
+    }
+}
+
+/**
+ * Initialize sessions table if it doesn't exist
+ */
+async function ensureTable(): Promise<void> {
+    if (isTableInitialized) return;
+
+    const pool = getPool();
+    if (!pool) return;
+
+    try {
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS sessions (
+                id VARCHAR(64) PRIMARY KEY,
+                user_id VARCHAR(36) NOT NULL,
+                access_token TEXT NOT NULL,
+                refresh_token TEXT NOT NULL,
+                expires_at TIMESTAMPTZ NOT NULL,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            );
+            
+            CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
+            CREATE INDEX IF NOT EXISTS idx_sessions_expires_at ON sessions(expires_at);
+        `);
+        isTableInitialized = true;
+        console.log('[Session] Sessions table initialized.');
+    } catch (error) {
+        console.error('[Session] Failed to initialize sessions table:', error);
     }
 }
 
 function generateSessionId(): string {
     return generateRandomToken(32);
-}
-
-function getSessionKey(sessionId: string): string {
-    return `session:${sessionId}`;
-}
-
-function getUserSessionsKey(userId: string): string {
-    return `user_sessions:${userId}`;
 }
 
 export async function createSession(data: SessionData): Promise<string> {
@@ -162,15 +128,15 @@ export async function createSession(data: SessionData): Promise<string> {
         createdAt: now,
     };
 
-    const redis = getRedisAdapter();
+    const pool = getPool();
 
-    if (redis) {
-        const key = getSessionKey(sessionId);
-        const userKey = getUserSessionsKey(data.userId);
-
-        await redis.set(key, JSON.stringify(session), SESSION_TTL_SECONDS);
-        await redis.sadd(userKey, sessionId);
-        await redis.expire(userKey, SESSION_TTL_SECONDS);
+    if (pool) {
+        await ensureTable();
+        await pool.query(
+            `INSERT INTO sessions (id, user_id, access_token, refresh_token, expires_at, created_at)
+             VALUES ($1, $2, $3, $4, $5, $6)`,
+            [sessionId, data.userId, data.accessToken, data.refreshToken, expiresAt, now]
+        );
     } else {
         memoryStore.set(sessionId, session);
     }
@@ -179,19 +145,28 @@ export async function createSession(data: SessionData): Promise<string> {
 }
 
 export async function getSession(sessionId: string): Promise<Session | null> {
-    const redis = getRedisAdapter();
+    const pool = getPool();
 
-    if (redis) {
-        const key = getSessionKey(sessionId);
-        const data = await redis.get(key);
+    if (pool) {
+        await ensureTable();
+        const result = await pool.query(
+            `SELECT id, user_id, access_token, refresh_token, expires_at, created_at
+             FROM sessions
+             WHERE id = $1 AND expires_at > NOW()`,
+            [sessionId]
+        );
 
-        if (!data) return null;
+        if (result.rows.length === 0) return null;
 
-        const session = typeof data === 'string' ? JSON.parse(data) : data;
-        session.expiresAt = new Date(session.expiresAt);
-        session.createdAt = new Date(session.createdAt);
-
-        return session;
+        const row = result.rows[0];
+        return {
+            id: row.id,
+            userId: row.user_id,
+            accessToken: row.access_token,
+            refreshToken: row.refresh_token,
+            expiresAt: new Date(row.expires_at),
+            createdAt: new Date(row.created_at),
+        };
     }
 
     const session = memoryStore.get(sessionId);
@@ -214,23 +189,36 @@ export async function updateSession(
 
     if (!session) return false;
 
-    const updatedSession: Session = {
-        ...session,
-        ...data,
-    };
+    const pool = getPool();
 
-    const redis = getRedisAdapter();
+    if (pool) {
+        await ensureTable();
 
-    if (redis) {
-        const key = getSessionKey(sessionId);
-        const remainingTtl = Math.floor(
-            (session.expiresAt.getTime() - Date.now()) / 1000
-        );
+        const updates: string[] = [];
+        const values: (string | undefined)[] = [];
+        let paramIndex = 1;
 
-        if (remainingTtl > 0) {
-            await redis.set(key, JSON.stringify(updatedSession), remainingTtl);
+        if (data.accessToken !== undefined) {
+            updates.push(`access_token = $${paramIndex++}`);
+            values.push(data.accessToken);
         }
+        if (data.refreshToken !== undefined) {
+            updates.push(`refresh_token = $${paramIndex++}`);
+            values.push(data.refreshToken);
+        }
+
+        if (updates.length === 0) return true;
+
+        values.push(sessionId);
+        await pool.query(
+            `UPDATE sessions SET ${updates.join(', ')} WHERE id = $${paramIndex}`,
+            values
+        );
     } else {
+        const updatedSession: Session = {
+            ...session,
+            ...data,
+        };
         memoryStore.set(sessionId, updatedSession);
     }
 
@@ -242,14 +230,11 @@ export async function deleteSession(sessionId: string): Promise<boolean> {
 
     if (!session) return false;
 
-    const redis = getRedisAdapter();
+    const pool = getPool();
 
-    if (redis) {
-        const key = getSessionKey(sessionId);
-        const userKey = getUserSessionsKey(session.userId);
-
-        await redis.del(key);
-        await redis.srem(userKey, sessionId);
+    if (pool) {
+        await ensureTable();
+        await pool.query('DELETE FROM sessions WHERE id = $1', [sessionId]);
     } else {
         memoryStore.delete(sessionId);
     }
@@ -258,23 +243,46 @@ export async function deleteSession(sessionId: string): Promise<boolean> {
 }
 
 export async function deleteUserSessions(userId: string): Promise<number> {
-    const redis = getRedisAdapter();
+    const pool = getPool();
 
-    if (redis) {
-        const userKey = getUserSessionsKey(userId);
-        const sessionIds = await redis.smembers(userKey);
-
-        if (sessionIds.length === 0) return 0;
-
-        const keys = sessionIds.map((id) => getSessionKey(id));
-        await redis.del(...keys, userKey);
-
-        return sessionIds.length;
+    if (pool) {
+        await ensureTable();
+        const result = await pool.query(
+            'DELETE FROM sessions WHERE user_id = $1',
+            [userId]
+        );
+        return result.rowCount || 0;
     }
 
     let count = 0;
     for (const [id, session] of memoryStore) {
         if (session.userId === userId) {
+            memoryStore.delete(id);
+            count++;
+        }
+    }
+
+    return count;
+}
+
+/**
+ * Clean up expired sessions (call periodically)
+ */
+export async function cleanupExpiredSessions(): Promise<number> {
+    const pool = getPool();
+
+    if (pool) {
+        await ensureTable();
+        const result = await pool.query(
+            'DELETE FROM sessions WHERE expires_at < NOW()'
+        );
+        return result.rowCount || 0;
+    }
+
+    let count = 0;
+    const now = new Date();
+    for (const [id, session] of memoryStore) {
+        if (session.expiresAt < now) {
             memoryStore.delete(id);
             count++;
         }

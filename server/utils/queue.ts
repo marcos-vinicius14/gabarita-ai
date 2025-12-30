@@ -1,11 +1,11 @@
 /**
- * BullMQ Queue Configuration
- * 
- * Provides queue instances and job helpers for async task processing.
- * Uses local Redis (Docker) for development and can be configured for production.
+ * pg-boss Queue Configuration
+ *
+ * Provides queue instance and job helpers for async task processing.
+ * Uses PostgreSQL as the job queue backend (Postgres Everything approach).
  */
 
-import { Queue, Worker, type Job, type ConnectionOptions } from 'bullmq';
+import { PgBoss } from 'pg-boss';
 
 // Queue names as constants for type safety
 export const QUEUE_NAMES = {
@@ -22,164 +22,130 @@ export interface DeckGenerationJobData {
     originalFilename: string;
 }
 
+// Singleton boss instance
+let boss: PgBoss | null = null;
+
 /**
- * Get Redis connection options - works both in Nuxt context and standalone worker
+ * Get database URL - works both in Nuxt context and standalone worker
  */
-function getRedisConnection(): ConnectionOptions {
-    let redisUrl = 'redis://localhost:6379';
+function getDatabaseUrl(): string {
+    let dbUrl = 'postgres://user:password@localhost:5432/gabarita_ai';
 
     try {
         // This will work in Nuxt context
         const config = useRuntimeConfig();
-        if (config.redisUrl) {
-            redisUrl = config.redisUrl as string;
+        if (config.databaseUrl) {
+            dbUrl = config.databaseUrl as string;
         }
     } catch {
         // Fall back to env vars for standalone worker
     }
 
     // Override with env var if set
-    redisUrl = process.env.REDIS_URL || redisUrl;
-
-    // Parse Redis URL
-    const url = new URL(redisUrl);
-
-    return {
-        host: url.hostname,
-        port: parseInt(url.port) || 6379,
-        password: url.password || undefined,
-        maxRetriesPerRequest: null, // Required for BullMQ
-    };
+    return process.env.DATABASE_URL || dbUrl;
 }
 
-// Singleton queue instances
-let deckGenerationQueue: Queue<DeckGenerationJobData> | null = null;
-
 /**
- * Get or create the deck generation queue
+ * Get or create the pg-boss instance
  */
-export function getDeckGenerationQueue(): Queue<DeckGenerationJobData> {
-    if (deckGenerationQueue) {
-        return deckGenerationQueue;
+export function getBoss(): PgBoss {
+    if (boss) {
+        return boss;
     }
 
-    const connection = getRedisConnection();
+    const connectionString = getDatabaseUrl();
 
-    deckGenerationQueue = new Queue<DeckGenerationJobData>(QUEUE_NAMES.DECK_GENERATION, {
-        connection,
-        defaultJobOptions: {
-            attempts: 3,
-            backoff: {
-                type: 'exponential',
-                delay: 5000, // 5s, 10s, 20s
-            },
-            removeOnComplete: {
-                age: 24 * 3600, // Keep completed jobs for 24 hours
-                count: 1000, // Keep last 1000 completed jobs
-            },
-            removeOnFail: {
-                age: 7 * 24 * 3600, // Keep failed jobs for 7 days
-            },
-        },
+    boss = new PgBoss({
+        connectionString,
+        // Schema for pg-boss tables (isolated from app tables)
+        schema: 'pgboss',
     });
 
-    console.log(`[Queue] Initialized ${QUEUE_NAMES.DECK_GENERATION} queue`);
+    boss.on('error', (error) => {
+        console.error('[Queue] pg-boss error:', error);
+    });
 
-    return deckGenerationQueue;
+    console.log('[Queue] pg-boss instance created');
+
+    return boss;
+}
+
+/**
+ * Start pg-boss (must be called before adding/processing jobs)
+ */
+export async function startQueue(): Promise<PgBoss> {
+    const bossInstance = getBoss();
+    await bossInstance.start();
+
+    // pg-boss v12 requires explicit queue creation
+    await bossInstance.createQueue(QUEUE_NAMES.DECK_GENERATION);
+
+    console.log(`[Queue] pg-boss started, queue created`);
+    return bossInstance;
+}
+
+let queueStarted = false;
+
+/**
+ * Ensure pg-boss is started before sending jobs
+ */
+async function ensureStarted(): Promise<PgBoss> {
+    const bossInstance = getBoss();
+    if (!queueStarted) {
+        await bossInstance.start();
+        await bossInstance.createQueue(QUEUE_NAMES.DECK_GENERATION);
+        queueStarted = true;
+        console.log(`[Queue] pg-boss initialized`);
+    }
+    return bossInstance;
 }
 
 /**
  * Add a deck generation job to the queue
- * 
+ *
  * @param jobData - The job data containing deckId, userId, r2Key, and originalFilename
- * @returns The created job
+ * @returns The created job ID
  */
-export async function addDeckGenerationJob(jobData: DeckGenerationJobData): Promise<Job<DeckGenerationJobData>> {
-    const queue = getDeckGenerationQueue();
+export async function addDeckGenerationJob(jobData: DeckGenerationJobData): Promise<string | null> {
+    const bossInstance = await ensureStarted();
 
-    const job = await queue.add(
-        `process-deck-${jobData.deckId}`,
+    const jobId = await bossInstance.send(
+        QUEUE_NAMES.DECK_GENERATION,
         jobData,
         {
-            jobId: jobData.deckId,
+            singletonKey: jobData.deckId,
+            retryLimit: 3,
+            retryDelay: 5,
+            retryBackoff: true,
         }
     );
 
-    console.log(`[Queue] Added job ${job.id} for deck ${jobData.deckId}`);
+    console.log(`[Queue] Added job ${jobId} for deck ${jobData.deckId}`);
 
-    return job;
-}
-
-/**
- * Create a worker for the deck generation queue
- * This is exported for use in the worker process
- * 
- * @param processor - The function to process each job
- * @returns The worker instance
- */
-export function createDeckGenerationWorker(
-    processor: (job: Job<DeckGenerationJobData>) => Promise<void>
-): Worker<DeckGenerationJobData> {
-    const connection = getRedisConnection();
-
-    const worker = new Worker<DeckGenerationJobData>(
-        QUEUE_NAMES.DECK_GENERATION,
-        processor,
-        {
-            connection,
-            concurrency: 2, // Process 2 jobs at a time
-        }
-    );
-
-    worker.on('completed', (job) => {
-        console.log(`[Worker] Job ${job.id} completed successfully`);
-    });
-
-    worker.on('failed', (job, error) => {
-        console.error(`[Worker] Job ${job?.id} failed:`, error.message);
-    });
-
-    worker.on('error', (error) => {
-        console.error('[Worker] Error:', error);
-    });
-
-    console.log(`[Worker] Started worker for ${QUEUE_NAMES.DECK_GENERATION}`);
-
-    return worker;
+    return jobId;
 }
 
 /**
  * Get queue stats for monitoring
  */
 export async function getQueueStats() {
-    const queue = getDeckGenerationQueue();
+    const bossInstance = getBoss();
 
-    const [waiting, active, completed, failed, delayed] = await Promise.all([
-        queue.getWaitingCount(),
-        queue.getActiveCount(),
-        queue.getCompletedCount(),
-        queue.getFailedCount(),
-        queue.getDelayedCount(),
-    ]);
-
+    // pg-boss doesn't have built-in stats, but we can query the job table
+    // For now, return a simple status
     return {
         queue: QUEUE_NAMES.DECK_GENERATION,
-        waiting,
-        active,
-        completed,
-        failed,
-        delayed,
-        total: waiting + active + delayed,
+        status: 'running',
     };
 }
 
-/**
- * Close queue connections (for graceful shutdown)
- */
-export async function closeQueues(): Promise<void> {
-    if (deckGenerationQueue) {
-        await deckGenerationQueue.close();
-        deckGenerationQueue = null;
-        console.log('[Queue] Closed deck generation queue');
+
+export async function closeQueue(): Promise<void> {
+    if (boss) {
+        await boss.stop({ graceful: true });
+        boss = null;
+        console.log('[Queue] pg-boss stopped');
     }
 }
+
+export { boss };

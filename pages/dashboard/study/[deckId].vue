@@ -258,36 +258,37 @@ onKeyStroke('Escape', () => {
                         <UButton color="rose" variant="soft" block @click="rateCard('again')">
                             <div class="flex flex-col items-center gap-1">
                                 <span class="font-medium">Errei</span>
-                                <span class="text-xs opacity-60">1</span>
+                                <span class="text-xs opacity-80">1</span>
                             </div>
                         </UButton>
 
                         <UButton color="orange" variant="soft" block @click="rateCard('hard')">
                             <div class="flex flex-col items-center gap-1">
                                 <span class="font-medium">Difícil</span>
-                                <span class="text-xs opacity-60">2</span>
+                                <span class="text-xs opacity-80">2</span>
                             </div>
                         </UButton>
 
                         <UButton color="primary" variant="soft" block @click="rateCard('good')">
                             <div class="flex flex-col items-center gap-1">
                                 <span class="font-medium">Bom</span>
-                                <span class="text-xs opacity-60">3</span>
+                                <span class="text-xs opacity-80">3</span>
                             </div>
                         </UButton>
 
                         <UButton color="emerald" variant="soft" block @click="rateCard('easy')">
                             <div class="flex flex-col items-center gap-1">
                                 <span class="font-medium">Fácil</span>
-                                <span class="text-xs opacity-60">4</span>
+                                <span class="text-xs opacity-80">4</span>
                             </div>
                         </UButton>
                     </div>
 
                     <!-- Keyboard Hint -->
-                    <p class="text-center text-xs text-zinc-500">
-                        Use as teclas 1-4 para avaliar rapidamente
-                    </p>
+                    <div class="flex items-center justify-center gap-2 text-xs text-zinc-400">
+                        <UIcon name="i-heroicons-keyboard" class="w-4 h-4" />
+                        <span>Use as teclas 1-4 para avaliar rapidamente</span>
+                    </div>
                 </div>
             </div>
         </main>

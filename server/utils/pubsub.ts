@@ -1,32 +1,41 @@
 /**
- * Redis Pub/Sub Utilities
- * 
- * Provides publisher instance for deck status events.
- * Works in worker context (separate from Nuxt).
+ * PostgreSQL Pub/Sub Utilities
+ *
+ * Provides NOTIFY functionality for deck status events.
+ * Uses PostgreSQL LISTEN/NOTIFY instead of Redis.
  */
 
-import Redis from 'ioredis';
+import { Pool } from 'pg';
 
-let publisher: Redis | null = null;
+let publisherPool: Pool | null = null;
 
-function getRedisUrl(): string {
-    return process.env.REDIS_URL || 'redis://localhost:6379';
+/**
+ * Get database URL
+ */
+function getDatabaseUrl(): string {
+    return process.env.DATABASE_URL || 'postgres://user:password@localhost:5432/gabarita_ai';
 }
 
-export function getPublisher(): Redis {
-    if (publisher) return publisher;
+/**
+ * Get the publisher pool (shared connection pool for NOTIFY)
+ */
+export function getPublisher(): Pool {
+    if (publisherPool) {
+        return publisherPool;
+    }
 
-    publisher = new Redis(getRedisUrl());
-
-    publisher.on('connect', () => {
-        console.log('[PubSub] Publisher connected to Redis');
+    publisherPool = new Pool({
+        connectionString: getDatabaseUrl(),
+        max: 5, // Small pool just for notifications
     });
 
-    publisher.on('error', (err) => {
-        console.error('[PubSub] Publisher error:', err.message);
+    publisherPool.on('error', (err) => {
+        console.error('[PubSub] Pool error:', err.message);
     });
 
-    return publisher;
+    console.log('[PubSub] Publisher pool created');
+
+    return publisherPool;
 }
 
 export interface DeckStatusEvent {
@@ -39,13 +48,16 @@ export interface DeckStatusEvent {
     timestamp: string;
 }
 
+/**
+ * Publish a deck status event via PostgreSQL NOTIFY
+ */
 export async function publishDeckStatus(
     deckId: string,
     userId: string,
     status: 'processing' | 'ready' | 'failed',
     options?: { progress?: string; errorMessage?: string }
 ): Promise<void> {
-    const pub = getPublisher();
+    const pool = getPublisher();
 
     const event: DeckStatusEvent = {
         type: 'deck:status',
@@ -57,14 +69,21 @@ export async function publishDeckStatus(
         timestamp: new Date().toISOString(),
     };
 
-    await pub.publish('deck:status', JSON.stringify(event));
+    // Escape the JSON payload for PostgreSQL
+    const payload = JSON.stringify(event);
+    // Use parameterized query-like escaping by using pg_notify function
+    await pool.query('SELECT pg_notify($1, $2)', ['deck_status', payload]);
+
     console.log(`[PubSub] Published deck:status for ${deckId}: ${status}`);
 }
 
+/**
+ * Close the publisher pool (for graceful shutdown)
+ */
 export async function closePublisher(): Promise<void> {
-    if (publisher) {
-        await publisher.quit();
-        publisher = null;
-        console.log('[PubSub] Publisher closed');
+    if (publisherPool) {
+        await publisherPool.end();
+        publisherPool = null;
+        console.log('[PubSub] Publisher pool closed');
     }
 }

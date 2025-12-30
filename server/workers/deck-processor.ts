@@ -1,13 +1,13 @@
 /**
  * Deck Processor Worker
- * 
- * BullMQ worker that processes uploaded PDFs:
+ *
+ * pg-boss worker that processes uploaded PDFs:
  * 1. Downloads from R2 (with gunzip decompression)
  * 2. Extracts text using pdf-parse
  * 3. Generates flashcards using AI (Gemini)
  * 4. Batch inserts cards into PostgreSQL
  * 5. Updates deck status
- * 
+ *
  * Run this worker separately from the main Nuxt app:
  *   pnpm worker
  */
@@ -15,7 +15,7 @@
 // Load environment variables first (before any other imports that need them)
 import 'dotenv/config';
 
-import { Worker, type Job } from 'bullmq';
+import { PgBoss } from 'pg-boss';
 import { PDFParse } from 'pdf-parse';
 import { generateText, embed } from 'ai';
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
@@ -26,25 +26,21 @@ import { updateDeckStatus, getDeckById } from '../domain/decks/deck.repository';
 import { QUEUE_NAMES, type DeckGenerationJobData } from '../utils/queue';
 import { publishDeckStatus, closePublisher } from '../utils/pubsub';
 
-// Redis connection for the worker
-function getRedisConnection() {
-    const redisUrl = process.env.REDIS_URL || 'redis://localhost:6379';
-    const url = new URL(redisUrl);
-
-    return {
-        host: url.hostname,
-        port: parseInt(url.port) || 6379,
-        password: url.password || undefined,
-        maxRetriesPerRequest: null,
-    };
-}
-
 /**
  * Interface for generated flashcard
  */
 interface GeneratedCard {
     front: string;
     back: string;
+}
+
+/**
+ * pg-boss Job interface (simplified for our use case)
+ */
+interface PgBossJob<T> {
+    id: string;
+    name: string;
+    data: T;
 }
 
 
@@ -250,7 +246,7 @@ async function insertCards(deckId: string, generatedCards: GeneratedCard[]) {
     return cardValues.length;
 }
 
-async function processDeckJob(job: Job<DeckGenerationJobData>): Promise<void> {
+async function processDeckJob(job: PgBossJob<DeckGenerationJobData>): Promise<void> {
     const { deckId, userId, r2Key, originalFilename } = job.data;
 
     console.log(`[Worker] Processing job ${job.id} for deck ${deckId}`);
@@ -317,45 +313,53 @@ async function processDeckJob(job: Job<DeckGenerationJobData>): Promise<void> {
 }
 
 
-function startWorker() {
+async function startWorker() {
     console.log('[Worker] Starting deck generation worker...');
 
-    const connection = getRedisConnection();
+    const databaseUrl = process.env.DATABASE_URL || 'postgres://user:password@localhost:5432/gabarita_ai';
 
-    const worker = new Worker<DeckGenerationJobData>(
+    const boss = new PgBoss({
+        connectionString: databaseUrl,
+        schema: 'pgboss',
+    });
+
+    boss.on('error', (error: Error) => {
+        console.error('[Worker] pg-boss error:', error);
+    });
+
+    await boss.start();
+    console.log('[Worker] pg-boss started');
+
+    // pg-boss v12 requires explicit queue creation
+    await boss.createQueue(QUEUE_NAMES.DECK_GENERATION);
+    console.log(`[Worker] Queue created: ${QUEUE_NAMES.DECK_GENERATION}`);
+
+    await boss.work<DeckGenerationJobData>(
         QUEUE_NAMES.DECK_GENERATION,
-        processDeckJob,
-        {
-            connection,
-            concurrency: 2,
+        async (jobs) => {
+            // pg-boss v12 passes an array of jobs
+            const jobArray = Array.isArray(jobs) ? jobs : [jobs];
+            for (const job of jobArray) {
+                await processDeckJob(job as unknown as PgBossJob<DeckGenerationJobData>);
+            }
         }
     );
 
-    worker.on('completed', (job) => {
-        console.log(`[Worker] ✅ Job ${job.id} completed successfully`);
-    });
-
-    worker.on('failed', (job, error) => {
-        console.error(`[Worker] ❌ Job ${job?.id} failed:`, error.message);
-    });
-
-    worker.on('error', (error) => {
-        console.error('[Worker] Error:', error);
-    });
-
-    process.on('SIGTERM', async () => {
-        console.log('[Worker] Received SIGTERM, shutting down...');
-        await worker.close();
-        process.exit(0);
-    });
-
-    process.on('SIGINT', async () => {
-        console.log('[Worker] Received SIGINT, shutting down...');
-        await worker.close();
-        process.exit(0);
-    });
-
     console.log(`[Worker] Listening to queue: ${QUEUE_NAMES.DECK_GENERATION}`);
+
+    // Graceful shutdown handlers
+    const shutdown = async () => {
+        console.log('[Worker] Shutting down...');
+        await boss.stop({ graceful: true });
+        await closePublisher();
+        process.exit(0);
+    };
+
+    process.on('SIGTERM', shutdown);
+    process.on('SIGINT', shutdown);
 }
 
-startWorker();
+startWorker().catch((error) => {
+    console.error('[Worker] Failed to start:', error);
+    process.exit(1);
+});

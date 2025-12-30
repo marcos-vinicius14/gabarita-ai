@@ -167,19 +167,19 @@ export default defineEventHandler(async (event) => {
                     const deck = await createDeckFromUpload(user.id, filename, r2Key);
 
                     console.log(`[Upload] Deck created: ${deck.id}`);
-                    const job = await addDeckGenerationJob({
+                    const jobId = await addDeckGenerationJob({
                         deckId: deck.id,
                         userId: user.id,
                         r2Key,
                         originalFilename: filename,
                     });
 
-                    console.log(`[Upload] Job queued: ${job.id}`);
+                    console.log(`[Upload] Job queued: ${jobId}`);
 
                     clearUploadTimeout();
                     resolve({
                         deck,
-                        jobId: job.id || deck.id,
+                        jobId: jobId || deck.id,
                     });
                 } catch (err) {
                     if (uploadedR2Key) {

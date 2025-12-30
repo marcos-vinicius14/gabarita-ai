@@ -16,11 +16,6 @@ export default defineNuxtConfig({
     databaseUrl: process.env.DATABASE_URL,
     googleApiKey: process.env.GOOGLE_API_KEY,
     jwtSecret: process.env.JWT_SECRET,
-    // Local Redis (Docker) - use REDIS_URL env var
-    redisUrl: process.env.REDIS_URL ?? '',
-    // Upstash Redis (Production)
-    upstashRedisUrl: process.env.UPSTASH_REDIS_URL ?? '',
-    upstashRedisToken: process.env.UPSTASH_REDIS_TOKEN ?? '',
     // Cloudflare R2 Storage
     r2AccountId: process.env.R2_ACCOUNT_ID ?? '',
     r2AccessKeyId: process.env.R2_ACCESS_KEY_ID ?? '',

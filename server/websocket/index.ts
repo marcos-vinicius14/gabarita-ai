@@ -1,20 +1,15 @@
 /**
  * WebSocket Server
- * 
+ *
  * Independent WebSocket server for real-time status updates.
- * Subscribes to Redis Pub/Sub and broadcasts to connected clients.
- * 
+ * Subscribes to PostgreSQL LISTEN/NOTIFY and broadcasts to connected clients.
+ *
  * Run: pnpm ws
  */
 
 import 'dotenv/config';
 import { WebSocketServer, WebSocket } from 'ws';
-import Redis from 'ioredis';
-
-// Redis connection
-function getRedisUrl(): string {
-    return process.env.REDIS_URL as string;
-}
+import { Client } from 'pg';
 
 interface DeckStatusEvent {
     type: 'deck:status';
@@ -38,44 +33,58 @@ const wss = new WebSocketServer({ port: PORT });
 
 console.log(`[WebSocket] Server starting on port ${PORT}...`);
 
-const subscriber = new Redis(getRedisUrl());
+// PostgreSQL connection for LISTEN
+const databaseUrl = process.env.DATABASE_URL || 'postgres://user:password@localhost:5432/gabarita_ai';
+const subscriber = new Client({ connectionString: databaseUrl });
 
-subscriber.on('connect', () => {
-    console.log('[WebSocket] Connected to Redis');
-});
-
-subscriber.on('error', (err) => {
-    console.error('[WebSocket] Redis error:', err.message);
-});
-
-subscriber.subscribe('deck:status', (err) => {
-    if (err) {
-        console.error('[WebSocket] Failed to subscribe:', err);
-        return;
-    }
-    console.log('[WebSocket] Subscribed to deck:status channel');
-});
-
-subscriber.on('message', (channel, message) => {
-    if (channel !== 'deck:status') return;
-
+async function startSubscriber() {
     try {
-        const event: DeckStatusEvent = JSON.parse(message);
-        console.log(`[WebSocket] Received event:`, event.type, event.deckId, event.status);
+        await subscriber.connect();
+        console.log('[WebSocket] Connected to PostgreSQL');
 
-        for (const [ws, info] of clients) {
-            if (info.userId === event.userId && ws.readyState === WebSocket.OPEN) {
-                ws.send(JSON.stringify(event));
+        await subscriber.query('LISTEN deck_status');
+        console.log('[WebSocket] Subscribed to deck_status channel');
+
+        subscriber.on('notification', (msg) => {
+            if (msg.channel !== 'deck_status' || !msg.payload) return;
+
+            try {
+                const event: DeckStatusEvent = JSON.parse(msg.payload);
+                console.log(`[WebSocket] Received event:`, event.type, event.deckId, event.status);
+
+                // Broadcast to authenticated clients for this user
+                for (const [ws, info] of clients) {
+                    if (info.userId === event.userId && ws.readyState === WebSocket.OPEN) {
+                        ws.send(JSON.stringify(event));
+                    }
+                }
+            } catch (err) {
+                console.error('[WebSocket] Failed to parse notification:', err);
             }
-        }
+        });
+
+        subscriber.on('error', (err) => {
+            console.error('[WebSocket] PostgreSQL error:', err.message);
+        });
+
+        subscriber.on('end', () => {
+            console.log('[WebSocket] PostgreSQL connection ended, reconnecting...');
+            setTimeout(startSubscriber, 5000);
+        });
+
     } catch (err) {
-        console.error('[WebSocket] Failed to parse message:', err);
+        console.error('[WebSocket] Failed to connect to PostgreSQL:', err);
+        setTimeout(startSubscriber, 5000);
     }
-});
+}
+
+// Start the subscriber
+startSubscriber();
 
 wss.on('connection', (ws) => {
     console.log('[WebSocket] Client connected');
     clients.set(ws, { ws });
+
     ws.on('message', (data) => {
         try {
             const message = JSON.parse(data.toString());
@@ -108,16 +117,16 @@ wss.on('listening', () => {
     console.log(`[WebSocket] Server listening on ws://localhost:${PORT}`);
 });
 
-process.on('SIGTERM', async () => {
-    console.log('[WebSocket] Received SIGTERM, shutting down...');
-    await subscriber.quit();
+const shutdown = async () => {
+    console.log('[WebSocket] Shutting down...');
+    try {
+        await subscriber.end();
+    } catch (err) {
+        // Ignore errors during shutdown
+    }
     wss.close();
     process.exit(0);
-});
+};
 
-process.on('SIGINT', async () => {
-    console.log('[WebSocket] Received SIGINT, shutting down...');
-    await subscriber.quit();
-    wss.close();
-    process.exit(0);
-});
+process.on('SIGTERM', shutdown);
+process.on('SIGINT', shutdown);
