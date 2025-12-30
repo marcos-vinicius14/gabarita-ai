@@ -26,6 +26,12 @@ const isJudging = ref(false);
 const isRating = ref(false);
 const hasSubmittedAnswer = ref(false);
 const judgeResult = ref<JudgeResult | null>(null);
+const streamingFeedback = ref('');
+const isStreaming = ref(false);
+
+// Modal states
+const showUserAnswerModal = ref(false);
+const showCorrectAnswerModal = ref(false);
 
 const currentCard = computed(() => cards.value[currentIndex.value]);
 const progress = computed(() => {
@@ -58,9 +64,9 @@ async function submitHardcoreAnswer() {
 
     isJudging.value = true;
     judgeResult.value = null;
+    streamingFeedback.value = '';
 
     try {
-        console.log('[Study UI] Calling judge API for card:', currentCard.value.id);
         const response = await $fetch<{ success: boolean; data: JudgeResult }>('/api/study/judge', {
             method: 'POST',
             body: {
@@ -70,13 +76,15 @@ async function submitHardcoreAnswer() {
             credentials: 'include',
         });
 
-        console.log('[Study UI] Judge response:', response);
         if (response.success) {
             judgeResult.value = response.data;
-            console.log('[Study UI] judgeResult set to:', judgeResult.value);
+
+            // If incorrect, start streaming explanation
+            if (!response.data.isCorrect) {
+                await streamExplanation();
+            }
         }
     } catch (error: any) {
-        console.error('[Study UI] Judge error:', error);
         toast.add({
             title: 'Erro ao avaliar',
             description: error?.data?.message ?? 'Não foi possível avaliar sua resposta.',
@@ -87,12 +95,44 @@ async function submitHardcoreAnswer() {
         isJudging.value = false;
         hasSubmittedAnswer.value = true;
         isAnswerRevealed.value = true;
-        console.log('[Study UI] Render conditions:', {
-            isHardcoreMode: isHardcoreMode.value,
-            hasSubmittedAnswer: hasSubmittedAnswer.value,
-            isAnswerRevealed: isAnswerRevealed.value,
-            judgeResult: judgeResult.value,
+    }
+}
+
+async function streamExplanation() {
+    if (!currentCard.value) return;
+
+    isStreaming.value = true;
+    streamingFeedback.value = '';
+
+    try {
+        const response = await fetch('/api/study/judge-stream', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
+            body: JSON.stringify({
+                cardId: currentCard.value.id,
+                userAnswer: userAnswer.value,
+            }),
         });
+
+        if (!response.ok || !response.body) {
+            throw new Error('Streaming failed');
+        }
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            const chunk = decoder.decode(value, { stream: true });
+            streamingFeedback.value += chunk;
+        }
+    } catch (error) {
+        console.error('[Study UI] Streaming error:', error);
+    } finally {
+        isStreaming.value = false;
     }
 }
 
@@ -137,6 +177,9 @@ function nextCard() {
     userAnswer.value = '';
     hasSubmittedAnswer.value = false;
     judgeResult.value = null;
+    streamingFeedback.value = '';
+    showUserAnswerModal.value = false;
+    showCorrectAnswerModal.value = false;
 }
 
 function exitStudy() {
@@ -149,10 +192,12 @@ function restartSession() {
     userAnswer.value = '';
     hasSubmittedAnswer.value = false;
     judgeResult.value = null;
+    streamingFeedback.value = '';
 }
 
 onKeyStroke(' ', (e) => {
-    if (!isAnswerRevealed.value && !isSessionComplete.value && !isRating.value) {
+    // Only trigger space shortcut in Fast Mode (not Hardcore where user is typing)
+    if (!isHardcoreMode.value && !isAnswerRevealed.value && !isSessionComplete.value && !isRating.value) {
         e.preventDefault();
         revealAnswer();
     }
@@ -261,7 +306,7 @@ onKeyStroke('Escape', () => {
                     </div>
                 </div>
 
-                <div v-if="isHardcoreMode && !isAnswerRevealed" class="space-y-4">
+                <div v-if="isHardcoreMode && !hasSubmittedAnswer && !isJudging" class="space-y-4">
                     <UTextarea v-model="userAnswer" placeholder="Digite sua resposta..." :rows="4" autofocus
                         :disabled="isJudging" class="w-full" />
                     <UButton color="violet" block :loading="isJudging" :disabled="!userAnswer.trim()"
@@ -272,29 +317,104 @@ onKeyStroke('Escape', () => {
                     </UButton>
                 </div>
 
+                <!-- Loading State while Judging -->
+                <div v-if="isJudging" class="flex flex-col items-center justify-center py-12">
+                    <UIcon name="i-heroicons-sparkles" class="w-12 h-12 text-violet-500 animate-pulse mb-4" />
+                    <p class="text-zinc-400">Analisando sua resposta...</p>
+                </div>
+
                 <UButton v-if="!isHardcoreMode && !isAnswerRevealed" color="violet" block size="lg"
                     @click="revealAnswer">
                     Ver Resposta
                     <span class="ml-2 text-xs text-zinc-400">(Espaço)</span>
                 </UButton>
 
-                <div v-if="isAnswerRevealed" class="space-y-4">
-                    <div v-if="isHardcoreMode && hasSubmittedAnswer" class="space-y-4">
-                        <div class="bg-zinc-800/50 rounded-xl p-4 border border-zinc-700">
-                            <p class="text-sm text-zinc-400 mb-2">Sua resposta:</p>
-                            <p class="text-zinc-200">{{ userAnswer }}</p>
+                <!-- Answer Revealed Section (Clean Layout) -->
+                <div v-if="hasSubmittedAnswer && !isJudging" class="space-y-4">
+                    <!-- Result Badge -->
+                    <div class="flex items-center justify-center">
+                        <div v-if="judgeResult"
+                            :class="judgeResult.isCorrect ? 'bg-emerald-500/20 text-emerald-400' : 'bg-red-500/20 text-red-400'"
+                            class="inline-flex items-center gap-2 px-4 py-2 rounded-full text-lg font-medium">
+                            <UIcon :name="judgeResult.isCorrect ? 'i-heroicons-check-circle' : 'i-heroicons-x-circle'"
+                                class="w-6 h-6" />
+                            {{ judgeResult.isCorrect ? 'Correto!' : 'Incorreto' }}
                         </div>
-
-                        <UAlert v-if="judgeResult" :color="judgeResult.isCorrect ? 'green' : 'red'" variant="soft"
-                            :icon="judgeResult.isCorrect ? 'i-heroicons-check-circle' : 'i-heroicons-x-circle'"
-                            :title="judgeResult.isCorrect ? 'Correto!' : 'Incorreto'"
-                            :description="judgeResult.feedback" />
-
-                        <UAlert v-else color="primary" variant="soft" icon="i-heroicons-information-circle"
-                            title="Compare sua resposta"
-                            description="Não foi possível obter avaliação da IA. Compare manualmente com a resposta correta abaixo." />
                     </div>
 
+                    <!-- Streaming Explanation (Main Focus for Incorrect) -->
+                    <div v-if="judgeResult && !judgeResult.isCorrect && (streamingFeedback || isStreaming)"
+                        class="bg-amber-500/10 rounded-xl p-5 border border-amber-500/30">
+                        <div class="flex items-center gap-2 mb-3">
+                            <UIcon name="i-heroicons-light-bulb" class="w-5 h-5 text-amber-400" />
+                            <p class="text-sm text-amber-400 font-medium">Explicação do Tutor</p>
+                            <UIcon v-if="isStreaming" name="i-heroicons-arrow-path"
+                                class="w-4 h-4 text-amber-400 animate-spin ml-auto" />
+                        </div>
+                        <p class="text-zinc-200 leading-relaxed whitespace-pre-wrap">{{ streamingFeedback }}<span
+                                v-if="isStreaming" class="animate-pulse">▋</span></p>
+                    </div>
+
+                    <!-- View Answers Buttons (Clean - Modal Triggers) -->
+                    <div class="flex gap-3">
+                        <UButton v-if="isHardcoreMode" color="gray" variant="ghost" class="flex-1"
+                            @click="showUserAnswerModal = true">
+                            <UIcon name="i-heroicons-document-text" class="w-4 h-4 mr-2" />
+                            Ver minha resposta
+                        </UButton>
+                        <UButton color="gray" variant="ghost" class="flex-1" @click="showCorrectAnswerModal = true">
+                            <UIcon name="i-heroicons-check-badge" class="w-4 h-4 mr-2" />
+                            Ver resposta correta
+                        </UButton>
+                    </div>
+
+                    <!-- Rating Buttons with Recommended Highlight -->
+                    <div class="grid grid-cols-4 gap-2 sm:gap-3">
+                        <UButton color="rose" :variant="judgeResult?.suggestedRating === 1 ? 'solid' : 'soft'" block
+                            :loading="isRating" @click="rateCard('again')"
+                            :class="{ 'ring-2 ring-rose-400 ring-offset-2 ring-offset-zinc-950': judgeResult?.suggestedRating === 1 }">
+                            <div class="flex flex-col items-center gap-1">
+                                <span class="font-medium">Errei</span>
+                                <span class="text-xs opacity-80">1</span>
+                            </div>
+                        </UButton>
+
+                        <UButton color="orange" :variant="judgeResult?.suggestedRating === 2 ? 'solid' : 'soft'" block
+                            :loading="isRating" @click="rateCard('hard')"
+                            :class="{ 'ring-2 ring-orange-400 ring-offset-2 ring-offset-zinc-950': judgeResult?.suggestedRating === 2 }">
+                            <div class="flex flex-col items-center gap-1">
+                                <span class="font-medium">Difícil</span>
+                                <span class="text-xs opacity-80">2</span>
+                            </div>
+                        </UButton>
+
+                        <UButton color="primary" :variant="judgeResult?.suggestedRating === 3 ? 'solid' : 'soft'" block
+                            :loading="isRating" @click="rateCard('good')"
+                            :class="{ 'ring-2 ring-violet-400 ring-offset-2 ring-offset-zinc-950': judgeResult?.suggestedRating === 3 }">
+                            <div class="flex flex-col items-center gap-1">
+                                <span class="font-medium">Bom</span>
+                                <span class="text-xs opacity-80">3</span>
+                            </div>
+                        </UButton>
+
+                        <UButton color="emerald" :variant="judgeResult?.suggestedRating === 4 ? 'solid' : 'soft'" block
+                            :loading="isRating" @click="rateCard('easy')"
+                            :class="{ 'ring-2 ring-emerald-400 ring-offset-2 ring-offset-zinc-950': judgeResult?.suggestedRating === 4 }">
+                            <div class="flex flex-col items-center gap-1">
+                                <span class="font-medium">Fácil</span>
+                                <span class="text-xs opacity-80">4</span>
+                            </div>
+                        </UButton>
+                    </div>
+
+                    <div class="flex items-center justify-center gap-2 text-xs text-zinc-400">
+                        <UIcon name="i-heroicons-keyboard" class="w-4 h-4" />
+                        <span>Use as teclas 1-4 para avaliar rapidamente</span>
+                    </div>
+                </div>
+
+                <!-- Fast Mode Answer Revealed -->
+                <div v-if="!isHardcoreMode && isAnswerRevealed" class="space-y-4">
                     <div class="bg-emerald-500/10 rounded-xl p-6 border border-emerald-500/30">
                         <p class="text-sm text-emerald-400 mb-2 font-medium">Resposta:</p>
                         <p class="text-lg text-zinc-100 leading-relaxed">
@@ -339,6 +459,32 @@ onKeyStroke('Escape', () => {
                 </div>
             </div>
         </main>
+
+        <!-- User Answer Modal -->
+        <UModal v-model="showUserAnswerModal">
+            <UCard>
+                <template #header>
+                    <div class="flex items-center gap-2">
+                        <UIcon name="i-heroicons-document-text" class="w-5 h-5 text-zinc-400" />
+                        <h3 class="text-lg font-semibold">Sua Resposta</h3>
+                    </div>
+                </template>
+                <p class="text-zinc-300 leading-relaxed whitespace-pre-wrap">{{ userAnswer }}</p>
+            </UCard>
+        </UModal>
+
+        <!-- Correct Answer Modal -->
+        <UModal v-model="showCorrectAnswerModal">
+            <UCard>
+                <template #header>
+                    <div class="flex items-center gap-2">
+                        <UIcon name="i-heroicons-check-badge" class="w-5 h-5 text-emerald-400" />
+                        <h3 class="text-lg font-semibold">Resposta Correta</h3>
+                    </div>
+                </template>
+                <p class="text-zinc-300 leading-relaxed whitespace-pre-wrap">{{ currentCard?.back }}</p>
+            </UCard>
+        </UModal>
 
         <footer v-if="deck && !isSessionComplete"
             class="fixed bottom-0 left-0 right-0 py-3 bg-zinc-950/80 backdrop-blur border-t border-zinc-800">
