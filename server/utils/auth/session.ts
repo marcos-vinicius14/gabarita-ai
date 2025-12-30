@@ -27,7 +27,7 @@ interface SessionData {
     refreshToken: string;
 }
 
-const SESSION_TTL_SECONDS = 60 * 60 * 24 * 7; // 7 days
+const SESSION_TTL_SECONDS = 60 * 60 * 24 * 7;
 
 const memoryStore = new Map<string, Session>();
 
@@ -50,9 +50,6 @@ function getDatabaseUrl(): string | null {
     return process.env.DATABASE_URL || null;
 }
 
-/**
- * Initialize PostgreSQL pool for sessions
- */
 function getPool(): Pool | null {
     if (pgPool !== undefined) {
         return pgPool;
@@ -80,10 +77,6 @@ function getPool(): Pool | null {
     }
 }
 
-/**
- * Initialize sessions table if it doesn't exist
- * Uses UNLOGGED table for better write performance (sessions are ephemeral)
- */
 async function ensureTable(): Promise<void> {
     if (isTableInitialized) return;
 
@@ -91,7 +84,6 @@ async function ensureTable(): Promise<void> {
     if (!pool) return;
 
     try {
-        // Check if table exists
         const tableCheck = await pool.query(`
             SELECT EXISTS (
                 SELECT FROM information_schema.tables 
@@ -100,7 +92,6 @@ async function ensureTable(): Promise<void> {
         `);
 
         if (!tableCheck.rows[0].exists) {
-            // Create as UNLOGGED for better performance (data lost on crash is acceptable)
             await pool.query(`
                 CREATE UNLOGGED TABLE sessions (
                     id VARCHAR(64) PRIMARY KEY,

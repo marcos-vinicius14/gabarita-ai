@@ -219,7 +219,72 @@ gabarita-ai/
                     └──────────────┘
 ```
 
-## 📄 Licença
+## � Postgres Everything - Detalhes
+
+### Por que essa abordagem?
+
+A arquitetura "Postgres Everything" elimina a necessidade de serviços adicionais (Redis, RabbitMQ) ao aproveitar recursos nativos do PostgreSQL:
+
+| Componente | Implementação | Biblioteca |
+|------------|---------------|------------|
+| Job Queue | Tabelas com `SKIP LOCKED` | [pg-boss](https://github.com/timgit/pg-boss) |
+| Pub/Sub | `NOTIFY`/`LISTEN` nativo | `pg` (node-postgres) |
+| Sessions | Tabela `UNLOGGED` | Pool de conexões |
+| Rate Limiting | Tabela `UNLOGGED` | Pool de conexões |
+
+### Otimizações de Performance
+
+#### UNLOGGED Tables
+
+Tabelas `sessions` e `rate_limits` são criadas como `UNLOGGED`:
+
+```sql
+CREATE UNLOGGED TABLE sessions (...);
+CREATE UNLOGGED TABLE rate_limits (...);
+```
+
+**Benefícios:**
+- ~2-3x mais rápido em writes (sem WAL)
+- Menos I/O no disco
+- Aceitável perder em crash (usuário re-loga)
+
+#### pg-boss Configuration
+
+```typescript
+await boss.work(QUEUE_NAME, {
+    pollingIntervalSeconds: 2, // Adequado para PDFs
+    batchSize: 1,              // Um job por vez (memory-intensive)
+}, handler);
+```
+
+#### WebSocket Reconnection
+
+Frontend implementa reconexão com backoff exponencial:
+
+```
+1s → 2s → 4s → 8s → 16s → 30s (máximo)
+```
+
+Ao reconectar, invalida queries para buscar status atual dos decks.
+
+### Limitações e Mitigações
+
+| Limitação | Mitigação |
+|-----------|-----------|
+| LISTEN/NOTIFY não persiste | Refresh de dados ao reconectar WebSocket |
+| pg-boss mais lento que Redis | Polling de 2s é aceitável para PDFs |
+| Cada LISTEN ocupa conexão | WebSocket server centraliza (1 conexão apenas) |
+| UNLOGGED perde dados em crash | Sessões são efêmeras, ok re-logar |
+
+### Quando escalar
+
+| Métrica | Limite | Ação |
+|---------|--------|------|
+| Conexões simultâneas | > 100 | Adicionar PgBouncer |
+| Jobs/segundo | > 100 | Múltiplos workers |
+| Latência de fila | > 10s | Reduzir polling interval |
+
+## �📄 Licença
 
 Proprietário - Todos os direitos reservados.
 
