@@ -82,6 +82,7 @@ function getPool(): Pool | null {
 
 /**
  * Initialize sessions table if it doesn't exist
+ * Uses UNLOGGED table for better write performance (sessions are ephemeral)
  */
 async function ensureTable(): Promise<void> {
     if (isTableInitialized) return;
@@ -90,21 +91,33 @@ async function ensureTable(): Promise<void> {
     if (!pool) return;
 
     try {
-        await pool.query(`
-            CREATE TABLE IF NOT EXISTS sessions (
-                id VARCHAR(64) PRIMARY KEY,
-                user_id VARCHAR(36) NOT NULL,
-                access_token TEXT NOT NULL,
-                refresh_token TEXT NOT NULL,
-                expires_at TIMESTAMPTZ NOT NULL,
-                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        // Check if table exists
+        const tableCheck = await pool.query(`
+            SELECT EXISTS (
+                SELECT FROM information_schema.tables 
+                WHERE table_schema = 'public' AND table_name = 'sessions'
             );
-            
-            CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
-            CREATE INDEX IF NOT EXISTS idx_sessions_expires_at ON sessions(expires_at);
         `);
+
+        if (!tableCheck.rows[0].exists) {
+            // Create as UNLOGGED for better performance (data lost on crash is acceptable)
+            await pool.query(`
+                CREATE UNLOGGED TABLE sessions (
+                    id VARCHAR(64) PRIMARY KEY,
+                    user_id VARCHAR(36) NOT NULL,
+                    access_token TEXT NOT NULL,
+                    refresh_token TEXT NOT NULL,
+                    expires_at TIMESTAMPTZ NOT NULL,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                );
+                
+                CREATE INDEX idx_sessions_user_id ON sessions(user_id);
+                CREATE INDEX idx_sessions_expires_at ON sessions(expires_at);
+            `);
+            console.log('[Session] UNLOGGED sessions table created.');
+        }
+
         isTableInitialized = true;
-        console.log('[Session] Sessions table initialized.');
     } catch (error) {
         console.error('[Session] Failed to initialize sessions table:', error);
     }

@@ -74,16 +74,29 @@ async function ensureTable(): Promise<void> {
     if (!p) return;
 
     try {
-        await p.query(`
-            CREATE TABLE IF NOT EXISTS rate_limits (
-                key VARCHAR(255) PRIMARY KEY,
-                attempts INT NOT NULL DEFAULT 0,
-                blocked_until TIMESTAMPTZ,
-                expires_at TIMESTAMPTZ NOT NULL
+        // Check if table exists
+        const tableCheck = await p.query(`
+            SELECT EXISTS (
+                SELECT FROM information_schema.tables 
+                WHERE table_schema = 'public' AND table_name = 'rate_limits'
             );
-            
-            CREATE INDEX IF NOT EXISTS idx_rate_limits_expires ON rate_limits(expires_at);
         `);
+
+        if (!tableCheck.rows[0].exists) {
+            // Create as UNLOGGED for better performance (data lost on crash is acceptable)
+            await p.query(`
+                CREATE UNLOGGED TABLE rate_limits (
+                    key VARCHAR(255) PRIMARY KEY,
+                    attempts INT NOT NULL DEFAULT 0,
+                    blocked_until TIMESTAMPTZ,
+                    expires_at TIMESTAMPTZ NOT NULL
+                );
+                
+                CREATE INDEX idx_rate_limits_expires ON rate_limits(expires_at);
+            `);
+            console.log('[RateLimit] UNLOGGED rate_limits table created.');
+        }
+
         tableInitialized = true;
     } catch (error) {
         console.error('[RateLimit] Failed to initialize table:', error);

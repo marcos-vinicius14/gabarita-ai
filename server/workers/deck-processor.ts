@@ -336,8 +336,11 @@ async function startWorker() {
 
     await boss.work<DeckGenerationJobData>(
         QUEUE_NAMES.DECK_GENERATION,
+        {
+            pollingIntervalSeconds: 2, // Check for new jobs every 2s (adequate for PDF processing)
+            batchSize: 1, // Process one job at a time (PDFs are memory-intensive)
+        },
         async (jobs) => {
-            // pg-boss v12 passes an array of jobs
             const jobArray = Array.isArray(jobs) ? jobs : [jobs];
             for (const job of jobArray) {
                 await processDeckJob(job as unknown as PgBossJob<DeckGenerationJobData>);

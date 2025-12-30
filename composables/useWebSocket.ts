@@ -119,9 +119,6 @@ export function useWebSocket(options: UseWebSocketOptions) {
         };
     }
 
-    /**
-     * Schedule reconnection with exponential backoff
-     */
     function scheduleReconnect() {
         reconnectAttempts.value++;
         const delay = getReconnectDelay();
