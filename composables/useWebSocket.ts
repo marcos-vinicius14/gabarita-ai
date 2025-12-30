@@ -1,8 +1,11 @@
 /**
  * WebSocket Composable
- * 
+ *
  * Provides WebSocket connection for real-time status updates.
- * Auto-reconnects and integrates with TanStack Query cache.
+ * Features:
+ * - Exponential backoff reconnection (handles server downtime gracefully)
+ * - Query current deck status on reconnect (handles LISTEN/NOTIFY limitations)
+ * - Integrates with TanStack Query cache
  */
 
 import { useQueryClient } from '@tanstack/vue-query';
@@ -22,6 +25,10 @@ interface UseWebSocketOptions {
     userId: Ref<string | undefined>;
 }
 
+const INITIAL_RECONNECT_DELAY = 1000;
+const MAX_RECONNECT_DELAY = 30000;
+const BACKOFF_MULTIPLIER = 2;
+
 export function useWebSocket(options: UseWebSocketOptions) {
     const config = useRuntimeConfig();
     const queryClient = useQueryClient();
@@ -30,25 +37,54 @@ export function useWebSocket(options: UseWebSocketOptions) {
     const ws = ref<WebSocket | null>(null);
     const isConnected = ref(false);
     const lastEvent = ref<DeckStatusEvent | null>(null);
+    const reconnectAttempts = ref(0);
+    const reconnectTimeout = ref<ReturnType<typeof setTimeout> | null>(null);
 
-    const WS_URL = (config.public.wsUrl as string) || 'ws://localhost:3001';
+    const WS_URL = (config.public.wsUrl as string) || 'ws://localhost:3002';
+
+    /**
+     * Calculate delay with exponential backoff
+     */
+    function getReconnectDelay(): number {
+        const delay = INITIAL_RECONNECT_DELAY * Math.pow(BACKOFF_MULTIPLIER, reconnectAttempts.value);
+        return Math.min(delay, MAX_RECONNECT_DELAY);
+    }
+
+    /**
+     * Refresh deck data after reconnection to catch any missed notifications
+     */
+    async function refreshDecksOnReconnect() {
+        console.log('[WS] Refreshing decks after reconnect...');
+        await queryClient.invalidateQueries({ queryKey: deckKeys.all });
+    }
 
     function connect() {
+        if (reconnectTimeout.value) {
+            clearTimeout(reconnectTimeout.value);
+            reconnectTimeout.value = null;
+        }
+
         if (ws.value?.readyState === WebSocket.OPEN) return;
 
         console.log('[WS] Connecting to', WS_URL);
         ws.value = new WebSocket(WS_URL as string);
 
-        ws.value.onopen = () => {
+        ws.value.onopen = async () => {
             console.log('[WS] Connected');
             isConnected.value = true;
 
-            // Authenticate with userId
+            const wasReconnecting = reconnectAttempts.value > 0;
+            reconnectAttempts.value = 0;
+
             if (options.userId.value) {
                 ws.value?.send(JSON.stringify({
                     type: 'auth',
                     userId: options.userId.value,
                 }));
+            }
+
+            if (wasReconnecting) {
+                await refreshDecksOnReconnect();
             }
         };
 
@@ -73,8 +109,9 @@ export function useWebSocket(options: UseWebSocketOptions) {
             console.log('[WS] Disconnected');
             isConnected.value = false;
 
-            // Reconnect after 3 seconds
-            setTimeout(() => connect(), 3000);
+            if (options.userId.value) {
+                scheduleReconnect();
+            }
         };
 
         ws.value.onerror = (err) => {
@@ -82,22 +119,36 @@ export function useWebSocket(options: UseWebSocketOptions) {
         };
     }
 
+    /**
+     * Schedule reconnection with exponential backoff
+     */
+    function scheduleReconnect() {
+        reconnectAttempts.value++;
+        const delay = getReconnectDelay();
+
+        console.log(`[WS] Reconnecting in ${delay / 1000}s (attempt ${reconnectAttempts.value})`);
+
+        reconnectTimeout.value = setTimeout(() => {
+            connect();
+        }, delay);
+    }
+
     function disconnect() {
+        if (reconnectTimeout.value) {
+            clearTimeout(reconnectTimeout.value);
+            reconnectTimeout.value = null;
+        }
+
         ws.value?.close();
         ws.value = null;
         isConnected.value = false;
+        reconnectAttempts.value = 0;
     }
 
     function handleDeckStatus(event: DeckStatusEvent) {
         console.log('[WS] Deck status:', event.deckId, event.status, event.progress);
         lastEvent.value = event;
 
-        // Show progress toast
-        if (event.status === 'processing' && event.progress) {
-            // Don't spam toasts - could use a persistent notification instead
-        }
-
-        // On status change, invalidate the decks query
         if (event.status === 'ready') {
             toast.add({
                 title: 'Deck pronto!',
@@ -119,14 +170,12 @@ export function useWebSocket(options: UseWebSocketOptions) {
         }
     }
 
-    // Watch userId to authenticate when available
     watch(options.userId, (userId) => {
         if (userId && ws.value?.readyState === WebSocket.OPEN) {
             ws.value.send(JSON.stringify({ type: 'auth', userId }));
         }
     });
 
-    // Connect on mount, disconnect on unmount
     onMounted(() => {
         if (options.userId.value) {
             connect();
@@ -137,7 +186,6 @@ export function useWebSocket(options: UseWebSocketOptions) {
         disconnect();
     });
 
-    // Also watch userId to connect when user logs in
     watch(options.userId, (userId) => {
         if (userId) {
             connect();
@@ -149,6 +197,7 @@ export function useWebSocket(options: UseWebSocketOptions) {
     return {
         isConnected: readonly(isConnected),
         lastEvent: readonly(lastEvent),
+        reconnectAttempts: readonly(reconnectAttempts),
         connect,
         disconnect,
     };
