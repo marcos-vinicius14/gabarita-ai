@@ -13,5 +13,8 @@ export * from './tables/decks';
 export * from './tables/cards';
 export * from './tables/reviews';
 
+// Billing
+export * from './tables/credit-transactions';
+
 // Waitlist
 export * from './tables/wailist';

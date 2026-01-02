@@ -8,6 +8,7 @@
 
 import { useDecks } from '~/composables/useDecks';
 import { useTrial } from '~/composables/useTrial';
+import { useUsage } from '~/composables/useUsage';
 import type { DeckItem } from '~/types/decks';
 
 definePageMeta({
@@ -18,42 +19,39 @@ useSeoMeta({
     title: 'Dashboard | Gabarita.ai',
 })
 
-// Auth
 const { user, isAuthenticated, isLoading: isAuthLoading, logout, userQuery } = useAuth()
 const router = useRouter()
 
-// Redirect if not authenticated
 watch([() => userQuery.isSuccess.value, () => userQuery.data.value], ([isSuccess, data]) => {
     if (isSuccess && !data) {
         router.push('/login')
     }
 }, { immediate: true })
 
-// Decks
 const { decks, deckCount, isLoading: isDecksLoading } = useDecks()
 
-// Trial
 const { isOnTrial, daysRemaining, effectiveRole, startTrial, startTrialMutation } = useTrial()
 
-// WebSocket for real-time status updates
+const { usage, uploadLimit, canUpload, isPro, refetch: refetchUsage } = useUsage()
+
 const userId = computed(() => user.value?.id)
 useWebSocket({ userId })
 
-// Computed: Show trial CTA if user is free and hasn't used trial
 const canStartTrial = computed(() => {
     if (!user.value) return false
     return user.value.role === 'free' && user.value.trialExpiresAt === null
 })
 
-// Modal state
 const isCreateModalOpen = ref(false)
 const isDeleteModalOpen = ref(false)
+const isBuyCreditsModalOpen = ref(false)
+const isUpgradeModalOpen = ref(false)
+const isProfileModalOpen = ref(false)
 const deckToDelete = ref<DeckItem | null>(null)
 
 // Computed
 const isLoading = computed(() => isAuthLoading.value || isDecksLoading.value)
 
-// Functions
 async function handleLogout(): Promise<void> {
     await logout()
     await router.push('/login')
@@ -102,14 +100,9 @@ function handleDeckDeleted() {
                 </NuxtLink>
 
                 <div class="flex items-center gap-2 sm:gap-4">
-                    <span v-if="user" class="hidden sm:block text-sm text-zinc-400 truncate max-w-[150px]">
-                        {{ user.email }}
-                    </span>
-                    <UButton color="gray" variant="ghost" icon="i-heroicons-arrow-right-on-rectangle" size="sm"
-                        class="sm:hidden" @click="handleLogout" />
-                    <UButton color="gray" variant="ghost" icon="i-heroicons-arrow-right-on-rectangle"
-                        class="hidden sm:flex" @click="handleLogout">
-                        Sair
+                    <UButton v-if="user" color="gray" variant="ghost" size="sm" @click="isProfileModalOpen = true">
+                        <UIcon name="i-heroicons-user-circle" class="w-5 h-5 mr-1.5" />
+                        <span class="hidden sm:inline">Meu Perfil</span>
                     </UButton>
                 </div>
             </div>
@@ -223,6 +216,37 @@ function handleDeckDeleted() {
                     </div>
                 </div>
 
+                <!-- Usage/Credits Card -->
+                <div v-if="usage && !isPro"
+                    class="bg-zinc-900/80 backdrop-blur-xl rounded-xl border border-zinc-800 p-4 sm:p-6">
+                    <div class="flex items-center justify-between gap-3 sm:gap-4">
+                        <div class="flex items-center gap-3 sm:gap-4">
+                            <div class="w-10 h-10 sm:w-12 sm:h-12 rounded-xl flex items-center justify-center flex-shrink-0"
+                                :class="canUpload ? 'bg-blue-500/20' : 'bg-red-500/20'">
+                                <UIcon
+                                    :name="canUpload ? 'i-heroicons-cloud-arrow-up' : 'i-heroicons-exclamation-triangle'"
+                                    class="w-5 h-5 sm:w-6 sm:h-6"
+                                    :class="canUpload ? 'text-blue-400' : 'text-red-400'" />
+                            </div>
+                            <div class="min-w-0">
+                                <p class="text-xl sm:text-2xl font-bold">
+                                    {{ uploadLimit?.remaining ?? 0 }}
+                                </p>
+                                <p class="text-xs sm:text-sm text-zinc-400">
+                                    Uploads disponíveis
+                                    <span v-if="usage.credits > 0" class="text-blue-400">
+                                        ({{ usage.credits }} créditos)
+                                    </span>
+                                </p>
+                            </div>
+                        </div>
+                        <UButton v-if="!canUpload" color="violet" size="sm" @click="isBuyCreditsModalOpen = true">
+                            <UIcon name="i-heroicons-plus" class="w-4 h-4 mr-1" />
+                            Comprar
+                        </UButton>
+                    </div>
+                </div>
+
                 <!-- Decks Section -->
                 <div class="space-y-4">
                     <div v-if="decks.length > 0" class="flex items-center justify-between">
@@ -244,5 +268,12 @@ function handleDeckDeleted() {
         <DecksCreateDeckModal v-model="isCreateModalOpen" @created="handleDeckCreated" />
 
         <DecksDeleteDeckModal v-model="isDeleteModalOpen" :deck="deckToDelete" @deleted="handleDeckDeleted" />
+
+        <BillingBuyCreditsModal v-model="isBuyCreditsModalOpen" />
+
+        <BillingUpgradePlansModal v-model="isUpgradeModalOpen" />
+
+        <UserProfileModal v-if="user" v-model:open="isProfileModalOpen" :user="user" @logout="handleLogout"
+            @upgrade="isProfileModalOpen = false; isUpgradeModalOpen = true" />
     </div>
 </template>

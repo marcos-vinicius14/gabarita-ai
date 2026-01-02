@@ -99,6 +99,7 @@ useHead({
         <LandingHeroSection />
         <LandingPainPointSection />
         <LandingFeaturesGrid />
+        <LandingPricingSection />
         <LandingSocialProof />
         <LandingTheFooter />
     </div>

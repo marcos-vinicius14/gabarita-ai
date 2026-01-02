@@ -17,6 +17,7 @@ import { addDeckGenerationJob } from '~/server/utils/queue';
 import { createDeckFromUpload, countDecksByUser } from '~/server/domain/decks/deck.repository';
 import { findUserById } from '~/server/domain/auth/auth.repository';
 import { getEffectiveRole } from '~/server/domain/trial/trial.service';
+import { checkCanUploadPDF, consumeUpload } from '~/server/domain/billing/billing.service';
 import {
     MAX_PDF_SIZE_BYTES,
     ALLOWED_PDF_MIME_TYPES,
@@ -44,6 +45,15 @@ export default defineEventHandler(async (event) => {
 
         if (!user) {
             throw new AuthenticationRequiredException();
+        }
+
+        // Check billing limits (monthly quota + credits)
+        const uploadCheck = await checkCanUploadPDF(user.id);
+        if (!uploadCheck.allowed) {
+            throw new ForbiddenException(
+                uploadCheck.reason ?? 'Limite de uploads atingido.',
+                { code: 'UPLOAD_LIMIT_EXCEEDED' }
+            );
         }
 
         const currentCount = await countDecksByUser(user.id);
@@ -175,6 +185,10 @@ export default defineEventHandler(async (event) => {
                     });
 
                     console.log(`[Upload] Job queued: ${jobId}`);
+
+                    // Consume upload quota/credit after successful deck creation
+                    const consumeSource = await consumeUpload(user.id, deck.id);
+                    console.log(`[Upload] Consumed upload from: ${consumeSource}`);
 
                     clearUploadTimeout();
                     resolve({

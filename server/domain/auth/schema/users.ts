@@ -27,6 +27,18 @@ export const users = pgTable('tb_users', {
     passwordHash: text('password_hash'),
     role: userRoleEnum('role').default('free').notNull(),
     trialExpiresAt: timestamp('trial_expires_at'),
+
+    // Billing fields
+    credits: integer('credits').default(0).notNull(),
+    monthlyUploadsUsed: integer('monthly_uploads_used').default(0).notNull(),
+    monthlyUploadsResetAt: timestamp('monthly_uploads_reset_at'),
+
+    // Subscription fields
+    stripeCustomerId: text('stripe_customer_id'),
+    subscriptionStatus: text('subscription_status'), // 'active' | 'canceled' | 'past_due' | null
+    subscriptionPlanId: text('subscription_plan_id'), // 'pro_monthly' | 'pro_annual' | null
+    subscriptionEndsAt: timestamp('subscription_ends_at'),
+
     failedLoginAttempts: integer('failed_login_attempts').default(0).notNull(),
     lockedUntil: timestamp('locked_until'),
     emailVerified: timestamp('email_verified'),
