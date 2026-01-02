@@ -1143,4 +1143,111 @@ function renderAuthUI(state: AuthState) {
 | **No Null Checks** | No more `if (data?.user)` ambiguity |
 | **Exhaustive Handling** | `switch` statements require all cases |
 | **Refactoring Safety** | Adding new variants breaks compilation where unhandled |
+
+---
+
+## 14. If-Less Programming (Functional Patterns)
+
+### 14.1 Overview
+
+- **Rule:** Minimize `if/else` blocks using functional programming and polymorphic patterns.
+- **Rule:** Use early returns (guard clauses) for edge cases, then proceed with happy path.
+- **Why:** Reduces cognitive complexity, improves readability, and makes code more declarative.
+
+### 14.2 Object Maps (Strategy Pattern)
+
+Replace `if/else` or `switch` with objects that map keys to values or functions:
+
+```typescript
+// ❌ Avoid
+function getPlanLimit(role: string): number {
+    if (role === 'free') return 1;
+    if (role === 'trial') return 5;
+    if (role === 'pro') return Infinity;
+    return 1;
+}
+
+// ✅ Prefer
+const PLAN_LIMITS: Record<string, number> = {
+    free: 1,
+    trial: 5,
+    pro: Infinity,
+};
+const getPlanLimit = (role: string) => PLAN_LIMITS[role] ?? 1;
 ```
+
+### 14.3 Optional Chaining + Nullish Coalescing
+
+```typescript
+// ❌ Avoid
+let name;
+if (user && user.profile && user.profile.name) {
+    name = user.profile.name;
+} else {
+    name = 'Anônimo';
+}
+
+// ✅ Prefer
+const name = user?.profile?.name ?? 'Anônimo';
+```
+
+### 14.4 Array Methods Over Loops
+
+```typescript
+// ❌ Avoid
+const results = [];
+for (const item of items) {
+    if (item.active) results.push(item.name);
+}
+
+// ✅ Prefer
+const results = items.filter(i => i.active).map(i => i.name);
+```
+
+### 14.5 Short-Circuit Evaluation
+
+```typescript
+// For simple conditional execution
+isValid && submit();
+
+// For default values
+const value = input || 'default';
+```
+
+> ⚠️ Use sparingly. Complex conditions hurt readability.
+
+### 14.6 Polymorphism via Object Maps
+
+```typescript
+// ❌ Avoid type checking
+function notify(type: string, msg: string) {
+    if (type === 'email') sendEmail(msg);
+    else if (type === 'sms') sendSMS(msg);
+}
+
+// ✅ Prefer polymorphic dispatch
+const notifiers = {
+    email: (msg: string) => sendEmail(msg),
+    sms: (msg: string) => sendSMS(msg),
+};
+notifiers[type]?.(msg);
+```
+
+### 14.7 When `if` Is Appropriate
+
+Use `if` when:
+- Complex boolean expressions with multiple `&&`/`||`
+- Side effects require cleanup (try/catch)
+- Readability would suffer with alternatives
+- Control flow is genuinely imperative
+
+### 14.8 Pattern Summary
+
+| Pattern | Use Case |
+|---------|----------|
+| **Object Maps** | Replace switch/if-else chains |
+| **Guard Clauses** | Handle edge cases early |
+| **Optional Chaining** | Null-safe property access |
+| **Array Methods** | filter/map/find over loops |
+| **Short-Circuit** | Simple conditional execution |
+| **Ternary** | When you need a value (not side effects) |
