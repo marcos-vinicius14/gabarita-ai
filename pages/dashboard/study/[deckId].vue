@@ -4,6 +4,7 @@
  */
 
 import { useDeckDetail } from '~/composables/useDecks';
+import { useMarkdown } from '~/composables/useMarkdown';
 import { onKeyStroke } from '@vueuse/core';
 import type { JudgeResult, Rating } from '~/types/study';
 
@@ -14,6 +15,7 @@ definePageMeta({
 const route = useRoute();
 const router = useRouter();
 const toast = useToast();
+const { parseMarkdown } = useMarkdown();
 
 const deckId = computed(() => route.params.deckId as string);
 const { deck, cards, isLoading, isError } = useDeckDetail(deckId);
@@ -195,6 +197,26 @@ function restartSession() {
     streamingFeedback.value = '';
 }
 
+function formatNextReview(dateString: string): string {
+    const now = new Date();
+    const nextReview = new Date(dateString);
+    const diffMs = nextReview.getTime() - now.getTime();
+    const diffMinutes = Math.round(diffMs / (1000 * 60));
+    const diffHours = Math.round(diffMs / (1000 * 60 * 60));
+    const diffDays = Math.round(diffMs / (1000 * 60 * 60 * 24));
+
+    if (diffMinutes < 60) {
+        return `${Math.max(1, diffMinutes)} minuto${diffMinutes !== 1 ? 's' : ''}`;
+    }
+    if (diffHours < 24) {
+        return `${diffHours} hora${diffHours !== 1 ? 's' : ''}`;
+    }
+    if (diffDays === 1) {
+        return '1 dia';
+    }
+    return `${diffDays} dias`;
+}
+
 onKeyStroke(' ', (e) => {
     // Only trigger space shortcut in Fast Mode (not Hardcore where user is typing)
     if (!isHardcoreMode.value && !isAnswerRevealed.value && !isSessionComplete.value && !isRating.value) {
@@ -266,9 +288,18 @@ onKeyStroke('Escape', () => {
             </div>
 
             <div v-else-if="cards.length === 0" class="text-center py-24">
-                <UIcon name="i-heroicons-document-text" class="w-12 h-12 text-zinc-600 mx-auto mb-4" />
-                <h2 class="text-xl font-semibold mb-2">Nenhum card para estudar</h2>
-                <p class="text-zinc-400 mb-6">Este deck ainda não possui cards.</p>
+                <div class="w-20 h-20 rounded-full bg-emerald-500/20 flex items-center justify-center mx-auto mb-6">
+                    <UIcon name="i-heroicons-check-badge" class="w-10 h-10 text-emerald-400" />
+                </div>
+                <h2 class="text-2xl font-bold mb-2">Bom trabalho! 🎉</h2>
+                <p class="text-zinc-400 mb-2">Não há cards para revisar no momento.</p>
+                <p v-if="deck?.nextReviewDate" class="text-zinc-500 mb-6">
+                    Volte em <span class="text-violet-400 font-medium">{{ formatNextReview(deck.nextReviewDate)
+                    }}</span>
+                </p>
+                <p v-else class="text-zinc-500 mb-6">
+                    Todos os cards já foram revisados!
+                </p>
                 <UButton color="violet" @click="exitStudy">Voltar ao Dashboard</UButton>
             </div>
 
@@ -351,8 +382,9 @@ onKeyStroke('Escape', () => {
                             <UIcon v-if="isStreaming" name="i-heroicons-arrow-path"
                                 class="w-4 h-4 text-amber-400 animate-spin ml-auto" />
                         </div>
-                        <p class="text-zinc-200 leading-relaxed whitespace-pre-wrap">{{ streamingFeedback }}<span
-                                v-if="isStreaming" class="animate-pulse">▋</span></p>
+                        <div class="prose prose-invert prose-sm max-w-none text-zinc-200"
+                            v-html="parseMarkdown(streamingFeedback)"></div>
+                        <span v-if="isStreaming" class="animate-pulse text-amber-400">▋</span>
                     </div>
 
                     <!-- View Answers Buttons (Clean - Modal Triggers) -->

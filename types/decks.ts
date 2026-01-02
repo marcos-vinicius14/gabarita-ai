@@ -31,7 +31,9 @@ export interface CardItem {
 }
 
 export interface DeckWithCards extends DeckItem {
+    dueCardCount: number;
     cards: CardItem[];
+    nextReviewDate?: string | null;
 }
 
 // =============================================================================

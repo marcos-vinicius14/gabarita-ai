@@ -1,64 +1,65 @@
 /**
  * GET /api/decks/:id
  * 
- * Get deck details with all cards.
+ * Get deck details with cards due for review.
+ * Only returns cards where next_review <= NOW() or next_review is null (new cards).
  * Requires authentication.
  */
 
-import { eq } from 'drizzle-orm';
-import { db } from '~/server/utils/db';
-import { decks } from '~/server/db/tables/decks';
-import { cards } from '~/server/db/tables/cards';
-import { handleException, AuthenticationRequiredException } from '~/server/utils/exceptions';
+import {
+    getDeckById,
+    getDueCardsByDeck,
+    getNextReviewDateByDeck,
+    countCardsByDeck,
+} from '~/server/domain/decks/deck.repository';
+import {
+    handleException,
+    AuthenticationRequiredException,
+    BadRequestException,
+    NotFoundException,
+    ForbiddenException,
+} from '~/server/utils/exceptions';
 
 export default defineEventHandler(async (event) => {
     try {
-        // Check authentication via middleware
         const user = event.context.user;
 
         if (!user) {
             throw new AuthenticationRequiredException();
         }
 
-        // Get deck ID from route params
         const deckId = getRouterParam(event, 'id');
 
         if (!deckId) {
             throw new BadRequestException('ID do deck é obrigatório.');
         }
 
-        // Fetch deck
-        const deckResult = await (db as any)
-            .select()
-            .from(decks)
-            .where(eq(decks.id, deckId));
-
-        const deck = deckResult[0];
+        const deck = await getDeckById(deckId);
 
         if (!deck) {
             throw new NotFoundException('Deck não encontrado.');
         }
 
-        // Check ownership
         if (deck.userId !== user.sub) {
             throw new ForbiddenException('Você não tem permissão para acessar este deck.');
         }
 
-        // Fetch cards for this deck
-        const deckCards = await (db as any)
-            .select({
-                id: cards.id,
-                deckId: cards.deckId,
-                front: cards.front,
-                back: cards.back,
-                createdAt: cards.createdAt,
-            })
-            .from(cards)
-            .where(eq(cards.deckId, deckId));
+        const dueCards = await getDueCardsByDeck(deckId);
+        const cardCount = await countCardsByDeck(deckId);
+
+        let nextReviewDate: string | null = null;
+        if (dueCards.length === 0) {
+            const nextDate = await getNextReviewDateByDeck(deckId);
+            if (nextDate) {
+                nextReviewDate = nextDate.toISOString();
+            }
+        }
 
         return {
             success: true,
-            message: 'Deck carregado com sucesso.',
+            message: dueCards.length > 0
+                ? 'Deck carregado com sucesso.'
+                : 'Não há cards para revisar no momento.',
             data: {
                 deck: {
                     id: deck.id,
@@ -70,8 +71,10 @@ export default defineEventHandler(async (event) => {
                     errorMessage: deck.errorMessage,
                     createdAt: deck.createdAt,
                     updatedAt: deck.updatedAt,
-                    cardCount: deckCards.length,
-                    cards: deckCards,
+                    cardCount,
+                    dueCardCount: dueCards.length,
+                    cards: dueCards,
+                    nextReviewDate,
                 },
             },
         };

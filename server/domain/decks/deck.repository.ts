@@ -126,3 +126,70 @@ export async function deleteDeck(deckId: string): Promise<boolean> {
     return result.length > 0;
 }
 
+// =============================================================================
+// Card Query Functions (for Study Flow)
+// =============================================================================
+
+export interface DueCard {
+    id: string;
+    deckId: string;
+    front: string;
+    back: string;
+    nextReview: Date | null;
+    createdAt: Date;
+}
+
+export async function getDueCardsByDeck(deckId: string): Promise<DueCard[]> {
+    const { or, lte, isNull, asc, and } = await import('drizzle-orm');
+    const now = new Date();
+
+    const result = await (db as any)
+        .select({
+            id: cards.id,
+            deckId: cards.deckId,
+            front: cards.front,
+            back: cards.back,
+            nextReview: cards.nextReview,
+            createdAt: cards.createdAt,
+        })
+        .from(cards)
+        .where(
+            and(
+                eq(cards.deckId, deckId),
+                or(
+                    lte(cards.nextReview, now),
+                    isNull(cards.nextReview)
+                )
+            )
+        )
+        .orderBy(asc(cards.nextReview));
+
+    return result as DueCard[];
+}
+
+export async function getNextReviewDateByDeck(deckId: string): Promise<Date | null> {
+    const { asc } = await import('drizzle-orm');
+
+    const result = await (db as any)
+        .select({
+            nextReview: cards.nextReview,
+        })
+        .from(cards)
+        .where(eq(cards.deckId, deckId))
+        .orderBy(asc(cards.nextReview))
+        .limit(1);
+
+    if (result.length > 0 && result[0].nextReview) {
+        return result[0].nextReview;
+    }
+    return null;
+}
+
+export async function countCardsByDeck(deckId: string): Promise<number> {
+    const result = await (db as any)
+        .select({ count: sql<number>`count(*)::int` })
+        .from(cards)
+        .where(eq(cards.deckId, deckId));
+
+    return result[0]?.count ?? 0;
+}

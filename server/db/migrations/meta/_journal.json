@@ -36,6 +36,13 @@
       "when": 1766923220837,
       "tag": "0004_curved_speedball",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1767138247010,
+      "tag": "0005_lumpy_santa_claus",
+      "breakpoints": true
     }
   ]
 }
