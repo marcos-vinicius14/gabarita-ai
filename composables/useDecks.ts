@@ -19,10 +19,7 @@ import type {
     UpdateCardInput,
     CardItem,
 } from '~/types/decks';
-
-// =============================================================================
-// Query Keys
-// =============================================================================
+import { type MutationError, getApiErrorMessage } from '~/types/errors';
 
 export const deckKeys = {
     all: ['decks'] as const,
@@ -34,10 +31,6 @@ export const cardKeys = {
     all: ['cards'] as const,
     byDeck: (deckId: string) => [...cardKeys.all, 'deck', deckId] as const,
 };
-
-// =============================================================================
-// API Functions
-// =============================================================================
 
 async function fetchDecks(): Promise<DeckListResponse> {
     return await $fetch<DeckListResponse>('/api/decks', {
@@ -95,15 +88,11 @@ async function deleteCard(cardId: string): Promise<DeleteCardResponse> {
     });
 }
 
-// =============================================================================
-// Main Composable
-// =============================================================================
 
 export function useDecks() {
     const queryClient = useQueryClient();
     const toast = useToast();
 
-    // Check if any deck is processing (for polling)
     const hasProcessingDecks = ref(false);
 
     const decksQuery = useQuery({
@@ -119,7 +108,6 @@ export function useDecks() {
         },
     });
 
-    // Update hasProcessingDecks when decks change
     watch(() => decksQuery.data.value, (newDecks) => {
         hasProcessingDecks.value = (newDecks ?? []).some(deck => deck.status === 'processing');
     }, { immediate: true });
@@ -128,7 +116,6 @@ export function useDecks() {
     const isLoading = computed(() => decksQuery.isLoading.value);
     const deckCount = computed(() => decks.value.length);
 
-    // Create Deck Mutation
     const createMutation = useMutation({
         mutationFn: createDeck,
         onSuccess: (data) => {
@@ -142,17 +129,16 @@ export function useDecks() {
                 });
             }
         },
-        onError: (error: any) => {
+        onError: (error: MutationError) => {
             toast.add({
                 title: 'Erro',
-                description: error?.data?.message ?? 'Não foi possível criar o deck.',
+                description: getApiErrorMessage(error, 'Não foi possível criar o deck.'),
                 color: 'red',
                 icon: 'i-heroicons-exclamation-circle',
             });
         },
     });
 
-    // Upload Deck Mutation
     const uploadMutation = useMutation({
         mutationFn: ({ file, bankStyle }: { file: File; bankStyle?: string }) =>
             uploadDeck(file, bankStyle),
@@ -167,17 +153,16 @@ export function useDecks() {
                 });
             }
         },
-        onError: (error: any) => {
+        onError: (error: MutationError) => {
             toast.add({
                 title: 'Erro no upload',
-                description: error?.data?.message ?? 'Não foi possível fazer o upload do PDF.',
+                description: getApiErrorMessage(error, 'Não foi possível fazer o upload do PDF.'),
                 color: 'red',
                 icon: 'i-heroicons-exclamation-circle',
             });
         },
     });
 
-    // Delete Deck Mutation
     const deleteMutation = useMutation({
         mutationFn: deleteDeck,
         onSuccess: (data) => {
@@ -191,10 +176,10 @@ export function useDecks() {
                 });
             }
         },
-        onError: (error: any) => {
+        onError: (error: MutationError) => {
             toast.add({
                 title: 'Erro',
-                description: error?.data?.message ?? 'Não foi possível excluir o deck.',
+                description: getApiErrorMessage(error, 'Não foi possível excluir o deck.'),
                 color: 'red',
                 icon: 'i-heroicons-exclamation-circle',
             });
@@ -259,7 +244,6 @@ export function useDeckDetail(deckId: Ref<string> | string) {
     const isLoading = computed(() => deckQuery.isLoading.value);
     const isError = computed(() => deckQuery.isError.value);
 
-    // Update Card Mutation
     const updateCardMutation = useMutation({
         mutationFn: ({ cardId, input }: { cardId: string; input: UpdateCardInput }) =>
             updateCard(cardId, input),
@@ -273,17 +257,16 @@ export function useDeckDetail(deckId: Ref<string> | string) {
                 });
             }
         },
-        onError: (error: any) => {
+        onError: (error: MutationError) => {
             toast.add({
                 title: 'Erro',
-                description: error?.data?.message ?? 'Não foi possível atualizar o card.',
+                description: getApiErrorMessage(error, 'Não foi possível atualizar o card.'),
                 color: 'red',
                 icon: 'i-heroicons-exclamation-circle',
             });
         },
     });
 
-    // Delete Card Mutation
     const deleteCardMutation = useMutation({
         mutationFn: deleteCard,
         onSuccess: (data) => {
@@ -296,10 +279,10 @@ export function useDeckDetail(deckId: Ref<string> | string) {
                 });
             }
         },
-        onError: (error: any) => {
+        onError: (error: MutationError) => {
             toast.add({
                 title: 'Erro',
-                description: error?.data?.message ?? 'Não foi possível excluir o card.',
+                description: getApiErrorMessage(error, 'Não foi possível excluir o card.'),
                 color: 'red',
                 icon: 'i-heroicons-exclamation-circle',
             });

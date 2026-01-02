@@ -5,6 +5,7 @@
  */
 
 import { useQuery, useMutation, useQueryClient } from '@tanstack/vue-query';
+import { type MutationError, getApiErrorMessage } from '~/types/errors';
 
 interface TrialStatusData {
     isOnTrial: boolean;
@@ -81,10 +82,10 @@ export function useTrial() {
                 icon: 'i-heroicons-check-circle',
             });
         },
-        onError: (error: any) => {
+        onError: (error: MutationError) => {
             toast.add({
                 title: 'Erro',
-                description: error?.data?.message ?? 'Não foi possível iniciar o período de teste.',
+                description: getApiErrorMessage(error, 'Não foi possível iniciar o período de teste.'),
                 color: 'red',
                 icon: 'i-heroicons-exclamation-circle',
             });

@@ -6,6 +6,7 @@
  */
 
 import { useMutation, useQueryClient, useQuery } from '@tanstack/vue-query';
+import { type MutationError, getApiErrorMessage } from '~/types/errors';
 
 const props = defineProps<{
     modelValue: boolean;
@@ -38,13 +39,13 @@ const selectedPlan = ref<string | null>(null);
 
 const subscribeMutation = useMutation({
     mutationFn: async (planId: string) => {
-        const response = await $fetch('/api/billing/subscribe', {
+        const response = await $fetch<{ message: string }>('/api/billing/subscribe', {
             method: 'POST',
             body: { planId },
         });
         return response;
     },
-    onSuccess: (data: any) => {
+    onSuccess: (data) => {
         toast.add({
             title: 'Sucesso!',
             description: data.message,
@@ -55,10 +56,10 @@ const subscribeMutation = useMutation({
         isOpen.value = false;
         selectedPlan.value = null;
     },
-    onError: (error: any) => {
+    onError: (error: MutationError) => {
         toast.add({
             title: 'Erro',
-            description: error?.data?.message || 'Erro ao processar assinatura.',
+            description: getApiErrorMessage(error, 'Erro ao processar assinatura.'),
             color: 'red',
         });
     },
@@ -104,7 +105,7 @@ function formatPrice(priceStr: string) {
                             <div class="flex items-baseline gap-1 mt-1">
                                 <span class="text-2xl font-bold text-violet-400">{{ formatPrice(plan.price) }}</span>
                                 <span class="text-sm text-zinc-500">/{{ plan.interval === 'month' ? 'mês' : 'ano'
-                                    }}</span>
+                                }}</span>
                             </div>
                         </div>
 

@@ -7,6 +7,7 @@
  */
 
 import { useMutation, useQueryClient } from '@tanstack/vue-query';
+import { type MutationError, getApiErrorMessage } from '~/types/errors';
 
 const props = defineProps<{
     modelValue: boolean;
@@ -34,13 +35,13 @@ const selectedPackage = ref<string | null>(null);
 
 const purchaseMutation = useMutation({
     mutationFn: async (packageId: string) => {
-        const response = await $fetch('/api/billing/credits', {
+        const response = await $fetch<{ message: string }>('/api/billing/credits', {
             method: 'POST',
             body: { packageId },
         });
         return response;
     },
-    onSuccess: (data: any) => {
+    onSuccess: (data: { message: string }) => {
         toast.add({
             title: 'Sucesso!',
             description: data.message,
@@ -50,10 +51,10 @@ const purchaseMutation = useMutation({
         isOpen.value = false;
         selectedPackage.value = null;
     },
-    onError: (error: any) => {
+    onError: (error: MutationError) => {
         toast.add({
             title: 'Erro',
-            description: error?.data?.message || 'Erro ao processar compra.',
+            description: getApiErrorMessage(error, 'Erro ao processar compra.'),
             color: 'red',
         });
     },

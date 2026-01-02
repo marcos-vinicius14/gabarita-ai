@@ -118,13 +118,8 @@ export async function mockActivateSubscription(
     }
 
     const now = new Date();
-    let endsAt: Date;
-
-    if (plan.interval === 'month') {
-        endsAt = new Date(now.getFullYear(), now.getMonth() + 1, now.getDate());
-    } else {
-        endsAt = new Date(now.getFullYear() + 1, now.getMonth(), now.getDate());
-    }
+    const addMonths = plan.interval === 'month' ? 1 : 12;
+    const endsAt = new Date(now.getFullYear(), now.getMonth() + addMonths, now.getDate());
 
     // Mock Stripe customer ID
     const mockStripeCustomerId = `cus_mock_${userId.substring(0, 8)}`;

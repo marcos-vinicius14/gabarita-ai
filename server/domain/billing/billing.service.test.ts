@@ -11,9 +11,6 @@ import { _testHelpers } from './billing.service';
 
 const { isNewMonth, getPlanLimits, getNextMonthFirstDay } = _testHelpers;
 
-// ============================================================================
-// isNewMonth Tests
-// ============================================================================
 
 describe('isNewMonth', () => {
     it('should return true when resetDate is null', () => {
@@ -43,10 +40,6 @@ describe('isNewMonth', () => {
     });
 });
 
-// ============================================================================
-// getPlanLimits Tests
-// ============================================================================
-
 describe('getPlanLimits', () => {
     it('should return free limits for free users', () => {
         const limits = getPlanLimits('free');
@@ -73,42 +66,28 @@ describe('getPlanLimits', () => {
     });
 });
 
-// ============================================================================
-// getNextMonthFirstDay Tests
-// ============================================================================
-
 describe('getNextMonthFirstDay', () => {
     it('should return the first day of next month', () => {
         const result = getNextMonthFirstDay();
         const now = new Date();
 
-        // Should be first day
         assert.equal(result.getDate(), 1);
 
-        // Should be next month (or January if December)
         const expectedMonth = (now.getMonth() + 1) % 12;
         assert.equal(result.getMonth(), expectedMonth);
     });
 });
 
-// ============================================================================
-// Integration-style tests (require mocking repository)
-// ============================================================================
-
 describe('checkCanUploadPDF logic', () => {
     it('should allow pro users unlimited uploads', () => {
-        // This would need the actual function with mocked repository
-        // Keeping as documentation for expected behavior
         assert.ok(true, 'Pro users should always be allowed');
     });
 
     it('should allow free users with remaining monthly quota', () => {
-        // Free user with 0 uploads used -> allowed via monthly_quota
         assert.ok(true, 'Free user with quota should be allowed');
     });
 
     it('should allow free users with credits when quota exhausted', () => {
-        // Free user with 1 upload used but 5 credits -> allowed via credits
         assert.ok(true, 'Free user with credits should be allowed');
     });
 
