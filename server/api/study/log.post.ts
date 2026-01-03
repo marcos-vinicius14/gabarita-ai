@@ -10,6 +10,10 @@ import {
 } from '~/server/domain/study/study.repository';
 import { calculateNextReview } from '~/server/domain/study/fsrs.service';
 import {
+    updateUserStreak,
+    incrementTotalCardsReviewed,
+} from '~/server/domain/gamification';
+import {
     handleException,
     AuthenticationRequiredException,
     NotFoundException,
@@ -70,11 +74,20 @@ export default defineEventHandler(async (event) => {
 
         await insertReview(cardId, user.sub, rating);
 
+        // Update gamification stats
+        const streakResult = await updateUserStreak(user.sub);
+        await incrementTotalCardsReviewed(user.sub);
+
         return {
             success: true,
             message: 'Review registrado com sucesso.',
             data: {
                 nextReview: fsrsResult.nextReview.toISOString(),
+                streak: {
+                    current: streakResult.newStreak,
+                    broken: streakResult.streakBroken,
+                    isFirst: streakResult.isFirstActivity,
+                },
             },
         };
     } catch (error) {

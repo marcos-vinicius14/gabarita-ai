@@ -5,13 +5,10 @@
  * Responsibility: Define users table schema for auth domain
  */
 
-import { pgTable, text, timestamp, uuid, integer, pgEnum } from 'drizzle-orm/pg-core';
+import { pgTable, text, timestamp, uuid, integer, pgEnum, date } from 'drizzle-orm/pg-core';
 import { uuidv7 } from 'uuidv7';
 
-/**
- * User Roles Enum
- * RBAC: Role-Based Access Control
- */
+
 export const userRoleEnum = pgEnum('user_role', ['free', 'trial', 'pro', 'admin']);
 
 /**
@@ -28,21 +25,24 @@ export const users = pgTable('tb_users', {
     role: userRoleEnum('role').default('free').notNull(),
     trialExpiresAt: timestamp('trial_expires_at'),
 
-    // Billing fields
     credits: integer('credits').default(0).notNull(),
     monthlyUploadsUsed: integer('monthly_uploads_used').default(0).notNull(),
     monthlyUploadsResetAt: timestamp('monthly_uploads_reset_at'),
 
-    // Subscription fields
     stripeCustomerId: text('stripe_customer_id'),
-    subscriptionStatus: text('subscription_status'), // 'active' | 'canceled' | 'past_due' | null
-    subscriptionPlanId: text('subscription_plan_id'), // 'pro_monthly' | 'pro_annual' | null
+    subscriptionStatus: text('subscription_status'),
+    subscriptionPlanId: text('subscription_plan_id'),
     subscriptionEndsAt: timestamp('subscription_ends_at'),
 
     failedLoginAttempts: integer('failed_login_attempts').default(0).notNull(),
     lockedUntil: timestamp('locked_until'),
     emailVerified: timestamp('email_verified'),
     lastLogin: timestamp('last_login'),
+
+    streakDays: integer('streak_days').default(0).notNull(),
+    lastActiveDate: date('last_active_date'),
+    totalCardsReviewed: integer('total_cards_reviewed').default(0).notNull(),
+
     createdAt: timestamp('created_at').defaultNow().notNull(),
     updatedAt: timestamp('updated_at').defaultNow().notNull(),
 });

@@ -26,17 +26,13 @@ import { updateDeckStatus, getDeckById } from '../domain/decks/deck.repository';
 import { QUEUE_NAMES, type DeckGenerationJobData } from '../utils/queue';
 import { publishDeckStatus, closePublisher } from '../utils/pubsub';
 
-/**
- * Interface for generated flashcard
- */
+
 interface GeneratedCard {
     front: string;
     back: string;
 }
 
-/**
- * pg-boss Job interface (simplified for our use case)
- */
+
 interface PgBossJob<T> {
     id: string;
     name: string;
@@ -330,15 +326,14 @@ async function startWorker() {
     await boss.start();
     console.log('[Worker] pg-boss started');
 
-    // pg-boss v12 requires explicit queue creation
     await boss.createQueue(QUEUE_NAMES.DECK_GENERATION);
     console.log(`[Worker] Queue created: ${QUEUE_NAMES.DECK_GENERATION}`);
 
     await boss.work<DeckGenerationJobData>(
         QUEUE_NAMES.DECK_GENERATION,
         {
-            pollingIntervalSeconds: 2, // Check for new jobs every 2s (adequate for PDF processing)
-            batchSize: 1, // Process one job at a time (PDFs are memory-intensive)
+            pollingIntervalSeconds: 2,
+            batchSize: 1,
         },
         async (jobs) => {
             const jobArray = Array.isArray(jobs) ? jobs : [jobs];
@@ -350,7 +345,6 @@ async function startWorker() {
 
     console.log(`[Worker] Listening to queue: ${QUEUE_NAMES.DECK_GENERATION}`);
 
-    // Graceful shutdown handlers
     const shutdown = async () => {
         console.log('[Worker] Shutting down...');
         await boss.stop({ graceful: true });

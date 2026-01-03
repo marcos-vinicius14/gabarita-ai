@@ -9,6 +9,7 @@
 import { useDecks } from '~/composables/useDecks';
 import { useTrial } from '~/composables/useTrial';
 import { useUsage } from '~/composables/useUsage';
+import { useGamification } from '~/composables/useGamification';
 import type { DeckItem } from '~/types/decks';
 
 definePageMeta({
@@ -33,6 +34,8 @@ const { decks, deckCount, isLoading: isDecksLoading } = useDecks()
 const { isOnTrial, daysRemaining, effectiveRole, startTrial, startTrialMutation } = useTrial()
 
 const { usage, uploadLimit, canUpload, isPro, refetch: refetchUsage } = useUsage()
+
+const { streakDays, totalCardsReviewed, weeklyActivity, isLoading: isGamificationLoading } = useGamification()
 
 const userId = computed(() => user.value?.id)
 useWebSocket({ userId })
@@ -100,6 +103,9 @@ function handleDeckDeleted() {
                 </NuxtLink>
 
                 <div class="flex items-center gap-2 sm:gap-4">
+                    <!-- Streak Badge -->
+                    <GamificationStreakBadge v-if="user" :streak-days="streakDays" />
+
                     <UButton v-if="user" color="gray" variant="ghost" size="sm" @click="isProfileModalOpen = true">
                         <UIcon name="i-heroicons-user-circle" class="w-5 h-5 mr-1.5" />
                         <span class="hidden sm:inline">Meu Perfil</span>
@@ -195,7 +201,7 @@ function handleDeckDeleted() {
                                 <UIcon name="i-heroicons-check-circle" class="w-5 h-5 sm:w-6 sm:h-6 text-green-400" />
                             </div>
                             <div class="min-w-0">
-                                <p class="text-xl sm:text-2xl font-bold">0</p>
+                                <p class="text-xl sm:text-2xl font-bold">{{ totalCardsReviewed }}</p>
                                 <p class="text-xs sm:text-sm text-zinc-400">Cards revisados</p>
                             </div>
                         </div>
@@ -204,12 +210,13 @@ function handleDeckDeleted() {
                     <div
                         class="bg-zinc-900/80 backdrop-blur-xl rounded-xl border border-zinc-800 p-4 sm:p-6 sm:col-span-2 lg:col-span-1">
                         <div class="flex items-center gap-3 sm:gap-4">
-                            <div
-                                class="w-10 h-10 sm:w-12 sm:h-12 rounded-xl bg-yellow-500/20 flex items-center justify-center flex-shrink-0">
-                                <UIcon name="i-heroicons-fire" class="w-5 h-5 sm:w-6 sm:h-6 text-yellow-400" />
+                            <div class="w-10 h-10 sm:w-12 sm:h-12 rounded-xl flex items-center justify-center flex-shrink-0"
+                                :class="streakDays > 0 ? 'bg-orange-500/20' : 'bg-zinc-800/50'">
+                                <UIcon name="i-heroicons-fire" class="w-5 h-5 sm:w-6 sm:h-6"
+                                    :class="streakDays > 0 ? 'text-orange-400' : 'text-zinc-500'" />
                             </div>
                             <div class="min-w-0">
-                                <p class="text-xl sm:text-2xl font-bold">0</p>
+                                <p class="text-xl sm:text-2xl font-bold">{{ streakDays }}</p>
                                 <p class="text-xs sm:text-sm text-zinc-400">Dias de streak</p>
                             </div>
                         </div>

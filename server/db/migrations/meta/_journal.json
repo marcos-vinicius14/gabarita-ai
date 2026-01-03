@@ -57,6 +57,13 @@
       "when": 1767381405828,
       "tag": "0007_fast_betty_ross",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1767463591952,
+      "tag": "0008_boring_mephisto",
+      "breakpoints": true
     }
   ]
 }
