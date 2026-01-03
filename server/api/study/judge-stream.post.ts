@@ -7,7 +7,7 @@
 
 import { z } from 'zod';
 import { streamText } from 'ai';
-import { createGoogleGenerativeAI } from '@ai-sdk/google';
+import { getGoogleAI } from '~/server/utils/ai';
 import { getCardWithOwner } from '~/server/domain/study/study.repository';
 import { EXPLANATION_SYSTEM_PROMPT, buildExplanationPrompt } from '~/server/domain/study/prompts';
 import {
@@ -51,18 +51,10 @@ export default defineEventHandler(async (event) => {
         throw new ForbiddenException('Você não tem permissão para acessar este card.');
     }
 
-    const googleApiKey = process.env.NUXT_GOOGLE_API_KEY || process.env.GOOGLE_API_KEY;
-
-    if (!googleApiKey) {
-        throw new Error('GOOGLE_API_KEY is not configured');
-    }
-
-    const google = createGoogleGenerativeAI({
-        apiKey: googleApiKey,
-    });
+    const google = getGoogleAI();
 
     const result = streamText({
-        model: google('gemini-2.5-flash'),
+        model: google('gemini-3.0-flash'),
         system: EXPLANATION_SYSTEM_PROMPT,
         prompt: buildExplanationPrompt(userAnswer, cardWithOwner.card.back),
         temperature: 0.7,

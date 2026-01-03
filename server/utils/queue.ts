@@ -1,20 +1,19 @@
 /**
- * pg-boss Queue Configuration
+ * Graphile Worker Queue Configuration
  *
- * Provides queue instance and job helpers for async task processing.
- * Uses PostgreSQL as the job queue backend (Postgres Everything approach).
+ * Provides job queue utilities using PostgreSQL with LISTEN/NOTIFY.
+ * Replaces pg-boss for better latency (~3ms vs polling).
  */
 
-import { PgBoss } from 'pg-boss';
+import { run, quickAddJob } from 'graphile-worker';
+import type { Runner } from 'graphile-worker';
+import { resolve } from 'path';
 
-// Queue names as constants for type safety
-export const QUEUE_NAMES = {
+export const TASK_NAMES = {
     DECK_GENERATION: 'deck-generation',
 } as const;
 
-/**
- * Job data for deck generation from PDF upload
- */
+
 export interface DeckGenerationJobData {
     deckId: string;
     userId: string;
@@ -22,130 +21,95 @@ export interface DeckGenerationJobData {
     originalFilename: string;
 }
 
-// Singleton boss instance
-let boss: PgBoss | null = null;
+let runner: Runner | null = null;
 
 /**
- * Get database URL - works both in Nuxt context and standalone worker
+ * Get database URL from environment
  */
 function getDatabaseUrl(): string {
-    let dbUrl = 'postgres://user:password@localhost:5432/gabarita_ai';
-
-    try {
-        // This will work in Nuxt context
-        const config = useRuntimeConfig();
-        if (config.databaseUrl) {
-            dbUrl = config.databaseUrl as string;
-        }
-    } catch {
-        // Fall back to env vars for standalone worker
+    // Prioritize DATABASE_URL from environment
+    if (process.env.DATABASE_URL) {
+        return process.env.DATABASE_URL;
     }
 
-    // Override with env var if set
-    return process.env.DATABASE_URL || dbUrl;
+    // Try Nuxt runtime config in Nuxt context
+    try {
+        const config = useRuntimeConfig();
+        if (config.databaseUrl) {
+            return config.databaseUrl as string;
+        }
+    } catch {
+        // Not in Nuxt context
+    }
+
+    throw new Error('DATABASE_URL environment variable is required');
 }
 
 /**
- * Get or create the pg-boss instance
+ * Start the Graphile Worker runner (for processing jobs)
  */
-export function getBoss(): PgBoss {
-    if (boss) {
-        return boss;
+export async function startWorkerRunner(): Promise<Runner> {
+    if (runner) {
+        return runner;
     }
 
     const connectionString = getDatabaseUrl();
+    const taskDirectory = resolve(__dirname, '../tasks');
 
-    boss = new PgBoss({
+    console.log('[Queue] Starting Graphile Worker...');
+    console.log('[Queue] Task directory:', taskDirectory);
+
+    runner = await run({
         connectionString,
-        // Schema for pg-boss tables (isolated from app tables)
-        schema: 'pgboss',
+        taskDirectory,
+        concurrency: 5,
+        pollInterval: 1000,
     });
 
-    boss.on('error', (error) => {
-        console.error('[Queue] pg-boss error:', error);
-    });
+    console.log('[Queue] Graphile Worker started');
 
-    console.log('[Queue] pg-boss instance created');
-
-    return boss;
-}
-
-/**
- * Start pg-boss (must be called before adding/processing jobs)
- */
-export async function startQueue(): Promise<PgBoss> {
-    const bossInstance = getBoss();
-    await bossInstance.start();
-
-    // pg-boss v12 requires explicit queue creation
-    await bossInstance.createQueue(QUEUE_NAMES.DECK_GENERATION);
-
-    console.log(`[Queue] pg-boss started, queue created`);
-    return bossInstance;
-}
-
-let queueStarted = false;
-
-/**
- * Ensure pg-boss is started before sending jobs
- */
-async function ensureStarted(): Promise<PgBoss> {
-    const bossInstance = getBoss();
-    if (!queueStarted) {
-        await bossInstance.start();
-        await bossInstance.createQueue(QUEUE_NAMES.DECK_GENERATION);
-        queueStarted = true;
-        console.log(`[Queue] pg-boss initialized`);
-    }
-    return bossInstance;
+    return runner;
 }
 
 /**
  * Add a deck generation job to the queue
- *
- * @param jobData - The job data containing deckId, userId, r2Key, and originalFilename
- * @returns The created job ID
+ * Uses quickAddJob for one-off job additions without needing a runner
  */
-export async function addDeckGenerationJob(jobData: DeckGenerationJobData): Promise<string | null> {
-    const bossInstance = await ensureStarted();
+export async function addDeckGenerationJob(jobData: DeckGenerationJobData): Promise<void> {
+    const connectionString = getDatabaseUrl();
 
-    const jobId = await bossInstance.send(
-        QUEUE_NAMES.DECK_GENERATION,
+    await quickAddJob(
+        { connectionString },
+        TASK_NAMES.DECK_GENERATION,
         jobData,
         {
-            singletonKey: jobData.deckId,
-            retryLimit: 3,
-            retryDelay: 5,
-            retryBackoff: true,
+            jobKey: jobData.deckId,
+            maxAttempts: 3,
         }
     );
 
-    console.log(`[Queue] Added job ${jobId} for deck ${jobData.deckId}`);
-
-    return jobId;
+    console.log(`[Queue] Added job for deck ${jobData.deckId}`);
 }
 
 /**
  * Get queue stats for monitoring
  */
 export async function getQueueStats() {
-    const bossInstance = getBoss();
-
-    // pg-boss doesn't have built-in stats, but we can query the job table
-    // For now, return a simple status
     return {
-        queue: QUEUE_NAMES.DECK_GENERATION,
-        status: 'running',
+        queue: TASK_NAMES.DECK_GENERATION,
+        status: runner ? 'running' : 'stopped',
     };
 }
 
-
+/**
+ * Stop the worker runner gracefully
+ */
 export async function closeQueue(): Promise<void> {
-    if (boss) {
-        await boss.stop({ graceful: true });
-        boss = null;
-        console.log('[Queue] pg-boss stopped');
+    if (runner) {
+        await runner.stop();
+        runner = null;
+        console.log('[Queue] Graphile Worker stopped');
     }
 }
 
-export { boss };
+export { runner };
