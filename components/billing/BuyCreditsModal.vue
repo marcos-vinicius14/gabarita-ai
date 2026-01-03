@@ -67,38 +67,48 @@ function handlePurchase() {
 </script>
 
 <template>
-    <UModal v-model:open="isOpen">
-        <template #content>
-            <div class="p-6">
-                <h2 class="text-xl font-bold mb-2">Comprar Créditos</h2>
-                <p class="text-sm text-zinc-400 mb-6">
-                    Cada crédito permite processar 1 PDF adicional.
-                </p>
-
-                <div class="space-y-3 mb-6">
-                    <button v-for="pkg in packages" :key="pkg.id" type="button"
-                        class="w-full p-4 rounded-xl border transition-all text-left" :class="[
-                            selectedPackage === pkg.id
-                                ? 'border-violet-500 bg-violet-500/10'
-                                : 'border-zinc-700 bg-zinc-800/50 hover:border-zinc-600',
-                            pkg.popular ? 'ring-2 ring-violet-500/50' : ''
-                        ]" @click="selectedPackage = pkg.id">
-                        <div class="flex items-center justify-between">
-                            <div>
-                                <div class="flex items-center gap-2">
-                                    <span class="font-semibold">{{ pkg.credits }} créditos</span>
-                                    <span v-if="pkg.popular"
-                                        class="text-xs bg-violet-500 text-white px-2 py-0.5 rounded-full">
-                                        Popular
-                                    </span>
-                                </div>
-                                <span class="text-sm text-zinc-400">{{ pkg.description }}</span>
-                            </div>
-                            <span class="text-lg font-bold text-violet-400">{{ pkg.price }}</span>
-                        </div>
-                    </button>
+    <UModal v-model="isOpen" :ui="{ width: 'sm:max-w-md' }">
+        <UCard class="bg-zinc-900 border-zinc-800">
+            <template #header>
+                <div class="flex items-center justify-between">
+                    <h2 class="text-xl font-bold">Comprar Créditos</h2>
+                    <UButton color="gray" variant="ghost" icon="i-heroicons-x-mark" size="sm" @click="isOpen = false" />
                 </div>
+            </template>
 
+            <p class="text-sm text-zinc-400 mb-6">
+                Cada crédito permite processar 1 PDF adicional.
+            </p>
+
+            <div class="space-y-3 mb-6">
+                <button v-for="pkg in packages" :key="pkg.id" type="button"
+                    class="w-full p-4 rounded-xl border transition-all text-left" :class="[
+                        selectedPackage === pkg.id
+                            ? 'border-violet-500 bg-violet-500/10'
+                            : 'border-zinc-700 bg-zinc-800/50 hover:border-zinc-600',
+                        pkg.popular ? 'ring-2 ring-violet-500/50' : ''
+                    ]" @click="selectedPackage = pkg.id">
+                    <div class="flex items-center justify-between">
+                        <div>
+                            <div class="flex items-center gap-2">
+                                <span class="font-semibold">{{ pkg.credits }} créditos</span>
+                                <span v-if="pkg.popular"
+                                    class="text-xs bg-violet-500 text-white px-2 py-0.5 rounded-full">
+                                    Popular
+                                </span>
+                            </div>
+                            <span class="text-sm text-zinc-400">{{ pkg.description }}</span>
+                        </div>
+                        <span class="text-lg font-bold text-violet-400">{{ pkg.price }}</span>
+                    </div>
+                </button>
+            </div>
+
+            <p class="text-xs text-zinc-500 text-center mb-4">
+                Pagamento seguro via Stripe (em breve)
+            </p>
+
+            <template #footer>
                 <div class="flex gap-3">
                     <UButton color="gray" variant="ghost" class="flex-1" @click="isOpen = false">
                         Cancelar
@@ -108,11 +118,7 @@ function handlePurchase() {
                         Comprar
                     </UButton>
                 </div>
-
-                <p class="text-xs text-zinc-500 text-center mt-4">
-                    Pagamento seguro via Stripe (em breve)
-                </p>
-            </div>
-        </template>
+            </template>
+        </UCard>
     </UModal>
 </template>

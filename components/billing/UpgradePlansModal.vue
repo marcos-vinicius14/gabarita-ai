@@ -76,49 +76,59 @@ function formatPrice(priceStr: string) {
 </script>
 
 <template>
-    <UModal v-model:open="isOpen" :ui="{ width: 'max-w-2xl' }">
-        <template #content>
-            <div class="p-6">
-                <h2 class="text-2xl font-bold mb-2">Upgrade para Pro</h2>
-                <p class="text-sm text-zinc-400 mb-6">
-                    Desbloqueie uploads ilimitados e todos os recursos premium.
-                </p>
-
-                <!-- Plan Cards -->
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
-                    <button v-for="plan in plans" :key="plan.id" type="button"
-                        class="relative p-5 rounded-xl border transition-all text-left" :class="[
-                            selectedPlan === plan.id
-                                ? 'border-violet-500 bg-violet-500/10'
-                                : 'border-zinc-700 bg-zinc-800/50 hover:border-zinc-600',
-                        ]" @click="selectedPlan = plan.id">
-                        <!-- Popular Badge -->
-                        <div v-if="plan.savings" class="absolute -top-3 left-4">
-                            <span
-                                class="text-xs bg-gradient-to-r from-violet-500 to-fuchsia-500 text-white px-3 py-1 rounded-full font-medium">
-                                {{ plan.savings }}
-                            </span>
-                        </div>
-
-                        <div class="mb-3">
-                            <h3 class="font-semibold text-lg">{{ plan.name }}</h3>
-                            <div class="flex items-baseline gap-1 mt-1">
-                                <span class="text-2xl font-bold text-violet-400">{{ formatPrice(plan.price) }}</span>
-                                <span class="text-sm text-zinc-500">/{{ plan.interval === 'month' ? 'mês' : 'ano'
-                                }}</span>
-                            </div>
-                        </div>
-
-                        <ul class="space-y-2">
-                            <li v-for="feature in plan.features" :key="feature" class="flex items-center gap-2 text-sm">
-                                <UIcon name="i-heroicons-check" class="w-4 h-4 text-green-400 flex-shrink-0" />
-                                <span class="text-zinc-300">{{ feature }}</span>
-                            </li>
-                        </ul>
-                    </button>
+    <UModal v-model="isOpen" :ui="{ width: 'max-w-2xl' }">
+        <UCard class="bg-zinc-900 border-zinc-800">
+            <template #header>
+                <div class="flex items-center justify-between">
+                    <div>
+                        <h2 class="text-2xl font-bold">Upgrade para Pro</h2>
+                        <p class="text-sm text-zinc-400">
+                            Desbloqueie uploads ilimitados e todos os recursos premium.
+                        </p>
+                    </div>
+                    <UButton color="gray" variant="ghost" icon="i-heroicons-x-mark" size="sm" @click="isOpen = false" />
                 </div>
+            </template>
 
-                <!-- Actions -->
+            <!-- Plan Cards -->
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+                <button v-for="plan in plans" :key="plan.id" type="button"
+                    class="relative p-5 rounded-xl border transition-all text-left" :class="[
+                        selectedPlan === plan.id
+                            ? 'border-violet-500 bg-violet-500/10'
+                            : 'border-zinc-700 bg-zinc-800/50 hover:border-zinc-600',
+                    ]" @click="selectedPlan = plan.id">
+                    <!-- Popular Badge -->
+                    <div v-if="plan.savings" class="absolute -top-3 left-4">
+                        <span
+                            class="text-xs bg-gradient-to-r from-violet-500 to-fuchsia-500 text-white px-3 py-1 rounded-full font-medium">
+                            {{ plan.savings }}
+                        </span>
+                    </div>
+
+                    <div class="mb-3">
+                        <h3 class="font-semibold text-lg">{{ plan.name }}</h3>
+                        <div class="flex items-baseline gap-1 mt-1">
+                            <span class="text-2xl font-bold text-violet-400">{{ formatPrice(plan.price) }}</span>
+                            <span class="text-sm text-zinc-500">/{{ plan.interval === 'month' ? 'mês' : 'ano'
+                                }}</span>
+                        </div>
+                    </div>
+
+                    <ul class="space-y-2">
+                        <li v-for="feature in plan.features" :key="feature" class="flex items-center gap-2 text-sm">
+                            <UIcon name="i-heroicons-check" class="w-4 h-4 text-green-400 flex-shrink-0" />
+                            <span class="text-zinc-300">{{ feature }}</span>
+                        </li>
+                    </ul>
+                </button>
+            </div>
+
+            <p class="text-xs text-zinc-500 text-center mb-4">
+                Pagamento seguro via Stripe. Cancele a qualquer momento.
+            </p>
+
+            <template #footer>
                 <div class="flex gap-3">
                     <UButton color="gray" variant="ghost" class="flex-1" @click="isOpen = false">
                         Cancelar
@@ -129,11 +139,7 @@ function formatPrice(priceStr: string) {
                         Assinar Agora
                     </UButton>
                 </div>
-
-                <p class="text-xs text-zinc-500 text-center mt-4">
-                    Pagamento seguro via Stripe. Cancele a qualquer momento.
-                </p>
-            </div>
-        </template>
+            </template>
+        </UCard>
     </UModal>
 </template>
