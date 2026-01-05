@@ -10,8 +10,13 @@
 import 'dotenv/config';
 import { run } from 'graphile-worker';
 import type { Runner } from 'graphile-worker';
-import { resolve } from 'path';
+import { resolve, dirname } from 'path';
+import { fileURLToPath } from 'url';
 import { closePublisher } from '../utils/pubsub';
+
+// ESM-compatible __dirname
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 
 async function main() {
     console.log('[Worker] Starting Graphile Worker...');

@@ -3,7 +3,6 @@
  * 
  * Creates a new deck for the authenticated user.
  * Requires authentication.
- * Uses effective role (considers trial expiry).
  * 
  * Body: { topic: string }
  */
@@ -11,7 +10,6 @@
 import { createUserDeck } from '~/server/domain/decks/deck.service';
 import { createDeckSchema, type UserRole } from '~/server/domain/decks/deck.types';
 import { findUserById } from '~/server/domain/auth/auth.repository';
-import { getEffectiveRole } from '~/server/domain/trial/trial.service';
 import {
     handleException,
     AuthenticationRequiredException,
@@ -41,7 +39,6 @@ export default defineEventHandler(async (event) => {
             throw new ValidationException('Por favor, corrija os erros de validação.', errors);
         }
 
-        // Fetch full user to get trialExpiresAt
         const user = await findUserById(sessionUser.sub);
 
         if (!user) {
@@ -50,14 +47,7 @@ export default defineEventHandler(async (event) => {
 
         const { topic } = parseResult.data;
 
-        // Use effective role (considers trial expiry)
-        const effectiveRole = getEffectiveRole({
-            id: user.id,
-            role: user.role,
-            trialExpiresAt: user.trialExpiresAt,
-        }) as UserRole;
-
-        const result = await createUserDeck(user.id, topic, effectiveRole);
+        const result = await createUserDeck(user.id, topic, user.role as UserRole);
 
         setResponseStatus(event, 201);
         return {

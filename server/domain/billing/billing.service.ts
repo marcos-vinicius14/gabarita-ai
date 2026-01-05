@@ -6,7 +6,6 @@
  */
 
 import { countDecksByUser } from '~/server/domain/decks/deck.repository';
-import { getEffectiveRole } from '~/server/domain/trial/trial.service';
 import {
     getUserBillingInfo,
     incrementMonthlyUploads,
@@ -68,12 +67,7 @@ export async function checkCanUploadPDF(userId: string): Promise<UploadCheckResu
         throw new NotFoundException('Usuário não encontrado.');
     }
 
-    const effectiveRole = getEffectiveRole({
-        id: user.id,
-        role: user.role,
-        trialExpiresAt: user.trialExpiresAt,
-    });
-
+    const effectiveRole = user.role;
     const limits = getPlanLimits(effectiveRole);
 
     if (limits.monthlyUploads === Infinity) {
@@ -196,12 +190,7 @@ export async function getUserUsageStatus(userId: string): Promise<UsageStatus> {
         throw new NotFoundException('Usuário não encontrado.');
     }
 
-    const effectiveRole = getEffectiveRole({
-        id: user.id,
-        role: user.role,
-        trialExpiresAt: user.trialExpiresAt,
-    });
-
+    const effectiveRole = user.role;
     const limits = getPlanLimits(effectiveRole);
     const deckCount = await countDecksByUser(userId);
 

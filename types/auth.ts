@@ -13,8 +13,7 @@ export interface UserProfile {
     id: string
     email: string
     name: string | null
-    role: 'free' | 'trial' | 'pro' | 'admin'
-    trialExpiresAt: string | null
+    role: 'free' | 'pro' | 'admin'
     emailVerified: boolean
     createdAt: string
 }

@@ -15,7 +15,6 @@ export interface User {
     name: string | null;
     passwordHash: string | null;
     role: UserRole;
-    trialExpiresAt: Date | null;
     failedLoginAttempts: number;
     lockedUntil: Date | null;
     emailVerified: Date | null;
@@ -31,7 +30,7 @@ export interface NewUser {
     role?: UserRole;
 }
 
-export type UserRole = 'free' | 'trial' | 'pro' | 'admin';
+export type UserRole = 'free' | 'pro' | 'admin';
 
 // ============================================================================
 // Refresh Token Types

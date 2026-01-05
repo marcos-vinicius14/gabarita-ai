@@ -31,14 +31,12 @@ const { usage, isLoading } = useUsage();
 
 const planLabels: Record<string, string> = {
     free: 'Gratuito',
-    trial: 'Trial',
     pro: 'Pro',
     admin: 'Admin',
 };
 
 const planColors: Record<string, string> = {
     free: 'text-zinc-400',
-    trial: 'text-green-400',
     pro: 'text-violet-400',
     admin: 'text-yellow-400',
 };

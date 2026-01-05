@@ -90,7 +90,6 @@ export interface UploadDeckResult {
 
 export const DECK_LIMITS = {
     free: 3,
-    trial: 10,
     pro: 100,
     admin: Infinity,
 } as const;

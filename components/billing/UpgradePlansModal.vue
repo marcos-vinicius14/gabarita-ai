@@ -14,6 +14,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
     'update:modelValue': [value: boolean];
+    'openCredits': [];
 }>();
 
 const toast = useToast();
@@ -70,8 +71,17 @@ function handleSubscribe() {
     subscribeMutation.mutate(selectedPlan.value);
 }
 
-function formatPrice(priceStr: string) {
-    return `R$ ${priceStr}`;
+function formatPrice(plan: any) {
+    // For annual plan, show installment format
+    if (plan.interval === 'year') {
+        const monthlyPrice = (parseFloat(plan.price.replace(',', '.')) / 12).toFixed(2).replace('.', ',');
+        return `12x R$ ${monthlyPrice}`;
+    }
+    return `R$ ${plan.price}`;
+}
+
+function isAnnualPlan(plan: any) {
+    return plan.interval === 'year';
 }
 </script>
 
@@ -109,10 +119,12 @@ function formatPrice(priceStr: string) {
                     <div class="mb-3">
                         <h3 class="font-semibold text-lg">{{ plan.name }}</h3>
                         <div class="flex items-baseline gap-1 mt-1">
-                            <span class="text-2xl font-bold text-violet-400">{{ formatPrice(plan.price) }}</span>
-                            <span class="text-sm text-zinc-500">/{{ plan.interval === 'month' ? 'mês' : 'ano'
-                                }}</span>
+                            <span class="text-2xl font-bold text-violet-400">{{ formatPrice(plan) }}</span>
+                            <span v-if="!isAnnualPlan(plan)" class="text-sm text-zinc-500">/mês</span>
                         </div>
+                        <p v-if="isAnnualPlan(plan)" class="text-[10px] text-zinc-500 mt-1">
+                            *mais taxa de juros do seu cartão
+                        </p>
                     </div>
 
                     <ul class="space-y-2">
@@ -127,6 +139,17 @@ function formatPrice(priceStr: string) {
             <p class="text-xs text-zinc-500 text-center mb-4">
                 Pagamento seguro via Stripe. Cancele a qualquer momento.
             </p>
+
+            <!-- Credits CTA -->
+            <div class="bg-zinc-800/50 rounded-lg p-4 mb-4">
+                <p class="text-sm text-zinc-400 text-center">
+                    Prefere pagar por uso?
+                    <button type="button" class="text-blue-400 hover:text-blue-300 underline ml-1"
+                        @click="isOpen = false; $emit('openCredits')">
+                        Comprar créditos
+                    </button>
+                </p>
+            </div>
 
             <template #footer>
                 <div class="flex gap-3">

@@ -23,7 +23,6 @@ export async function getUserBillingInfo(userId: string): Promise<UserBillingInf
             credits: users.credits,
             monthlyUploadsUsed: users.monthlyUploadsUsed,
             monthlyUploadsResetAt: users.monthlyUploadsResetAt,
-            trialExpiresAt: users.trialExpiresAt,
             subscriptionStatus: users.subscriptionStatus,
             subscriptionPlanId: users.subscriptionPlanId,
             subscriptionEndsAt: users.subscriptionEndsAt,

@@ -7,7 +7,6 @@
  */
 
 import { useDecks } from '~/composables/useDecks';
-import { useTrial } from '~/composables/useTrial';
 import { useUsage } from '~/composables/useUsage';
 import { useGamification } from '~/composables/useGamification';
 import type { DeckItem } from '~/types/decks';
@@ -31,8 +30,6 @@ watch([() => userQuery.isSuccess.value, () => userQuery.data.value], ([isSuccess
 
 const { decks, deckCount, isLoading: isDecksLoading } = useDecks()
 
-const { isOnTrial, daysRemaining, effectiveRole, startTrial, startTrialMutation } = useTrial()
-
 const { usage, uploadLimit, canUpload, isPro, refetch: refetchUsage } = useUsage()
 
 const { streakDays, totalCardsReviewed, weeklyActivity, isLoading: isGamificationLoading } = useGamification()
@@ -40,9 +37,10 @@ const { streakDays, totalCardsReviewed, weeklyActivity, isLoading: isGamificatio
 const userId = computed(() => user.value?.id)
 useWebSocket({ userId })
 
-const canStartTrial = computed(() => {
+// Show annual plan CTA for free users
+const showAnnualCTA = computed(() => {
     if (!user.value) return false
-    return user.value.role === 'free' && user.value.trialExpiresAt === null
+    return user.value.role === 'free'
 })
 
 const isCreateModalOpen = ref(false)
@@ -141,41 +139,25 @@ function handleDeckDeleted() {
                     </UButton>
                 </div>
 
-                <!-- Trial CTA Banner -->
-                <div v-if="canStartTrial"
+                <!-- Annual Plan CTA Banner -->
+                <div v-if="showAnnualCTA"
                     class="bg-gradient-to-r from-violet-600/20 via-violet-500/10 to-violet-600/20 backdrop-blur-xl rounded-xl border border-violet-500/30 p-4 sm:p-6">
                     <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
                         <div class="flex items-center gap-3 sm:gap-4">
                             <div
                                 class="w-10 h-10 sm:w-12 sm:h-12 rounded-xl bg-violet-500/20 flex items-center justify-center flex-shrink-0">
-                                <UIcon name="i-heroicons-sparkles" class="w-5 h-5 sm:w-6 sm:h-6 text-violet-400" />
+                                <UIcon name="i-heroicons-rocket-launch" class="w-5 h-5 sm:w-6 sm:h-6 text-violet-400" />
                             </div>
                             <div>
-                                <h3 class="font-semibold text-white">Experimente o Gabarita Pro por 7 dias!</h3>
-                                <p class="text-sm text-zinc-400">Crie até 10 decks e desbloqueie recursos premium.</p>
+                                <h3 class="font-semibold text-white">🚀 Assine o plano anual e ganhe 2 meses grátis!
+                                </h3>
+                                <p class="text-sm text-zinc-400">Uploads ilimitados, todos os recursos premium.</p>
                             </div>
                         </div>
-                        <UButton color="violet" size="md" :loading="startTrialMutation.isPending.value"
-                            @click="startTrial">
-                            <UIcon name="i-heroicons-rocket-launch" class="w-4 h-4 mr-1.5" />
-                            Começar Trial Grátis
+                        <UButton color="violet" size="md" @click="isUpgradeModalOpen = true">
+                            <UIcon name="i-heroicons-arrow-up-circle" class="w-4 h-4 mr-1.5" />
+                            Fazer Upgrade
                         </UButton>
-                    </div>
-                </div>
-
-                <!-- Trial Active Banner -->
-                <div v-else-if="isOnTrial && daysRemaining !== null"
-                    class="bg-gradient-to-r from-green-600/20 via-green-500/10 to-green-600/20 backdrop-blur-xl rounded-xl border border-green-500/30 p-4 sm:p-5">
-                    <div class="flex items-center gap-3">
-                        <div
-                            class="w-8 h-8 sm:w-10 sm:h-10 rounded-lg bg-green-500/20 flex items-center justify-center flex-shrink-0">
-                            <UIcon name="i-heroicons-check-badge" class="w-4 h-4 sm:w-5 sm:h-5 text-green-400" />
-                        </div>
-                        <div>
-                            <span class="font-medium text-green-400">Trial Ativo</span>
-                            <span class="text-zinc-400 ml-2">{{ daysRemaining }} {{ daysRemaining === 1 ? 'dia restante'
-                                : 'dias restantes' }}</span>
-                        </div>
                     </div>
                 </div>
 
@@ -278,7 +260,8 @@ function handleDeckDeleted() {
 
         <BillingBuyCreditsModal v-model="isBuyCreditsModalOpen" />
 
-        <BillingUpgradePlansModal v-model="isUpgradeModalOpen" />
+        <BillingUpgradePlansModal v-model="isUpgradeModalOpen"
+            @open-credits="isUpgradeModalOpen = false; isBuyCreditsModalOpen = true" />
 
         <UserProfileModal v-if="user" v-model:open="isProfileModalOpen" :user="user" @logout="handleLogout"
             @upgrade="isProfileModalOpen = false; isUpgradeModalOpen = true" />

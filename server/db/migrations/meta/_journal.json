@@ -64,6 +64,20 @@
       "when": 1767463591952,
       "tag": "0008_boring_mephisto",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1767468334472,
+      "tag": "0009_tearful_tana_nile",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1767640448711,
+      "tag": "0010_panoramic_blade",
+      "breakpoints": true
     }
   ]
 }

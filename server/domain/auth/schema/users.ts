@@ -9,7 +9,7 @@ import { pgTable, text, timestamp, uuid, integer, pgEnum, date } from 'drizzle-o
 import { uuidv7 } from 'uuidv7';
 
 
-export const userRoleEnum = pgEnum('user_role', ['free', 'trial', 'pro', 'admin']);
+export const userRoleEnum = pgEnum('user_role', ['free', 'pro', 'admin']);
 
 /**
  * Users Table
@@ -23,7 +23,6 @@ export const users = pgTable('tb_users', {
     name: text('name'),
     passwordHash: text('password_hash'),
     role: userRoleEnum('role').default('free').notNull(),
-    trialExpiresAt: timestamp('trial_expires_at'),
 
     credits: integer('credits').default(0).notNull(),
     monthlyUploadsUsed: integer('monthly_uploads_used').default(0).notNull(),
@@ -42,6 +41,10 @@ export const users = pgTable('tb_users', {
     streakDays: integer('streak_days').default(0).notNull(),
     lastActiveDate: date('last_active_date'),
     totalCardsReviewed: integer('total_cards_reviewed').default(0).notNull(),
+
+    // Admin management fields
+    deletedAt: timestamp('deleted_at'),
+    blockedAt: timestamp('blocked_at'),
 
     createdAt: timestamp('created_at').defaultNow().notNull(),
     updatedAt: timestamp('updated_at').defaultNow().notNull(),

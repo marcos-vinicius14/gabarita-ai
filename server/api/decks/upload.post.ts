@@ -16,7 +16,6 @@ import { uploadStreamToR2, generateR2Key, deleteFromR2 } from '~/server/utils/st
 import { addDeckGenerationJob } from '~/server/utils/queue';
 import { createDeckFromUpload, countDecksByUser } from '~/server/domain/decks/deck.repository';
 import { findUserById } from '~/server/domain/auth/auth.repository';
-import { getEffectiveRole } from '~/server/domain/trial/trial.service';
 import { checkCanUploadPDF, consumeUpload } from '~/server/domain/billing/billing.service';
 import {
     MAX_PDF_SIZE_BYTES,
@@ -47,7 +46,6 @@ export default defineEventHandler(async (event) => {
             throw new AuthenticationRequiredException();
         }
 
-        // Check billing limits (monthly quota + credits)
         const uploadCheck = await checkCanUploadPDF(user.id);
         if (!uploadCheck.allowed) {
             throw new ForbiddenException(
@@ -57,11 +55,7 @@ export default defineEventHandler(async (event) => {
         }
 
         const currentCount = await countDecksByUser(user.id);
-        const effectiveRole = getEffectiveRole({
-            id: user.id,
-            role: user.role,
-            trialExpiresAt: user.trialExpiresAt,
-        }) as UserRole;
+        const effectiveRole = user.role as UserRole;
 
         const limit = DECK_LIMITS[effectiveRole];
 
@@ -86,7 +80,6 @@ export default defineEventHandler(async (event) => {
             deck: Awaited<ReturnType<typeof createDeckFromUpload>>;
             jobId: string;
         }>((resolve, reject) => {
-            // Timeout for entire upload process
             const timeoutId = setTimeout(() => {
                 req.destroy();
                 reject(new BadRequestException(

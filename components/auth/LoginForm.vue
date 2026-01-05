@@ -48,9 +48,15 @@ async function handleSubmit() {
     try {
         const result = await login({ email: form.email, password: form.password })
 
-        if (isSuccess(result)) {
-            await router.push('/dashboard')
+        if (!isSuccess(result)) return
+
+        const userRole = result.data.user.role
+        if (userRole === 'admin') {
+            await router.push('/admin')
+            return
         }
+
+        await router.push('/dashboard')
     } catch {
     }
 }

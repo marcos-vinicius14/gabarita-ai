@@ -16,7 +16,6 @@ import type { UserRole } from '../auth/auth.types';
  */
 export const PLAN_LIMITS = {
     free: { monthlyUploads: 1, maxDecks: 3 },
-    trial: { monthlyUploads: 5, maxDecks: 10 },
     pro: { monthlyUploads: Infinity, maxDecks: Infinity },
     admin: { monthlyUploads: Infinity, maxDecks: Infinity },
 } as const;
@@ -56,7 +55,7 @@ export const SUBSCRIPTION_PLANS = [
 ] as const;
 
 export type SubscriptionPlanId = typeof SUBSCRIPTION_PLANS[number]['id'];
-export type SubscriptionStatus = 'active' | 'canceled' | 'past_due' | 'trialing' | null;
+export type SubscriptionStatus = 'active' | 'canceled' | 'past_due' | null;
 
 // ============================================================================
 // Types
@@ -68,7 +67,6 @@ export interface UserBillingInfo {
     credits: number;
     monthlyUploadsUsed: number;
     monthlyUploadsResetAt: Date | null;
-    trialExpiresAt: Date | null;
     // Subscription fields
     subscriptionStatus: SubscriptionStatus;
     subscriptionPlanId: SubscriptionPlanId | null;

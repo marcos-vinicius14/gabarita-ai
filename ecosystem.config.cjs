@@ -22,7 +22,7 @@ module.exports = {
         },
         {
             name: 'worker-deck-processor',
-            script: 'server/workers/deck-processor.ts',
+            script: 'server/workers/index.ts',
             instances: 1,
             interpreter: 'tsx',
             env_file: '.env',
