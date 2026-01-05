@@ -1,122 +1,36 @@
 /**
- * Session Store
+ * Session Service
  *
  * Server-side session management for BFF pattern.
  * Tokens are stored server-side, never exposed to the client.
  *
- * Storage: PostgreSQL (Postgres Everything approach)
+ * Storage: PostgreSQL via Drizzle ORM (Postgres Everything approach)
  * Falls back to in-memory Map if database is not available.
  */
 
-import { Pool } from 'pg';
-import { useRuntimeConfig } from '#imports';
 import { generateRandomToken } from './tokens';
+import * as sessionRepository from '~/server/domain/auth/session.repository';
+import type { Session, SessionData } from '~/server/domain/auth/session.types';
 
-export interface Session {
-    id: string;
-    userId: string;
-    accessToken: string;
-    refreshToken: string;
-    expiresAt: Date;
-    createdAt: Date;
-}
+// Re-export types for consumers
+export type { Session, SessionData };
 
-interface SessionData {
-    userId: string;
-    accessToken: string;
-    refreshToken: string;
-}
 
-const SESSION_TTL_SECONDS = 60 * 60 * 24 * 7;
+const SESSION_TTL_SECONDS = 60 * 60 * 24 * 7; // 7 days
+const MEMORY_CACHE_TTL_MS = 180_000; // 3 minutes
 
 const memoryStore = new Map<string, Session>();
+const sessionCache = new Map<string, { session: Session; expiresAt: number }>();
 
-let pgPool: Pool | null | undefined = undefined;
-let isTableInitialized = false;
+const generateSessionId = () => generateRandomToken(32);
 
-/**
- * Get database URL
- */
-function getDatabaseUrl(): string | null {
+const isDbAvailable = (): boolean => {
     try {
-        const config = useRuntimeConfig();
-        if (config.databaseUrl) {
-            return config.databaseUrl as string;
-        }
+        return !!process.env.DATABASE_URL;
     } catch {
-        // Fall back to env vars
+        return false;
     }
-
-    return process.env.DATABASE_URL || null;
-}
-
-function getPool(): Pool | null {
-    if (pgPool !== undefined) {
-        return pgPool;
-    }
-
-    const dbUrl = getDatabaseUrl();
-    if (!dbUrl) {
-        console.warn('[Session] No DATABASE_URL configured. Using in-memory store.');
-        pgPool = null;
-        return null;
-    }
-
-    try {
-        pgPool = new Pool({
-            connectionString: dbUrl,
-            max: 5,
-        });
-
-        console.log('[Session] Using PostgreSQL for session storage.');
-        return pgPool;
-    } catch (error) {
-        console.warn('[Session] Failed to create PostgreSQL pool:', error);
-        pgPool = null;
-        return null;
-    }
-}
-
-async function ensureTable(): Promise<void> {
-    if (isTableInitialized) return;
-
-    const pool = getPool();
-    if (!pool) return;
-
-    try {
-        const tableCheck = await pool.query(`
-            SELECT EXISTS (
-                SELECT FROM information_schema.tables 
-                WHERE table_schema = 'public' AND table_name = 'sessions'
-            );
-        `);
-
-        if (!tableCheck.rows[0].exists) {
-            await pool.query(`
-                CREATE UNLOGGED TABLE sessions (
-                    id VARCHAR(64) PRIMARY KEY,
-                    user_id VARCHAR(36) NOT NULL,
-                    access_token TEXT NOT NULL,
-                    refresh_token TEXT NOT NULL,
-                    expires_at TIMESTAMPTZ NOT NULL,
-                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-                );
-                
-                CREATE INDEX idx_sessions_user_id ON sessions(user_id);
-                CREATE INDEX idx_sessions_expires_at ON sessions(expires_at);
-            `);
-            console.log('[Session] UNLOGGED sessions table created.');
-        }
-
-        isTableInitialized = true;
-    } catch (error) {
-        console.error('[Session] Failed to initialize sessions table:', error);
-    }
-}
-
-function generateSessionId(): string {
-    return generateRandomToken(32);
-}
+};
 
 export async function createSession(data: SessionData): Promise<string> {
     const sessionId = generateSessionId();
@@ -132,56 +46,45 @@ export async function createSession(data: SessionData): Promise<string> {
         createdAt: now,
     };
 
-    const pool = getPool();
-
-    if (pool) {
-        await ensureTable();
-        await pool.query(
-            `INSERT INTO sessions (id, user_id, access_token, refresh_token, expires_at, created_at)
-             VALUES ($1, $2, $3, $4, $5, $6)`,
-            [sessionId, data.userId, data.accessToken, data.refreshToken, expiresAt, now]
-        );
-    } else {
+    if (!isDbAvailable()) {
         memoryStore.set(sessionId, session);
+        return sessionId;
     }
+
+    await sessionRepository.createSession({
+        id: sessionId,
+        userId: data.userId,
+        accessToken: data.accessToken,
+        refreshToken: data.refreshToken,
+        expiresAt,
+    });
 
     return sessionId;
 }
 
 export async function getSession(sessionId: string): Promise<Session | null> {
-    const pool = getPool();
+    const cached = sessionCache.get(sessionId);
 
-    if (pool) {
-        await ensureTable();
-        const result = await pool.query(
-            `SELECT id, user_id, access_token, refresh_token, expires_at, created_at
-             FROM sessions
-             WHERE id = $1 AND expires_at > NOW()`,
-            [sessionId]
-        );
+    if (cached && Date.now() < cached.expiresAt) return cached.session;
+    sessionCache.delete(sessionId);
 
-        if (result.rows.length === 0) return null;
+    if (!isDbAvailable()) {
+        const session = memoryStore.get(sessionId);
+        if (!session) return null;
 
-        const row = result.rows[0];
-        return {
-            id: row.id,
-            userId: row.user_id,
-            accessToken: row.access_token,
-            refreshToken: row.refresh_token,
-            expiresAt: new Date(row.expires_at),
-            createdAt: new Date(row.created_at),
-        };
+        if (session.expiresAt < new Date()) {
+            memoryStore.delete(sessionId);
+            return null;
+        }
+
+        sessionCache.set(sessionId, { session, expiresAt: Date.now() + MEMORY_CACHE_TTL_MS });
+        return session;
     }
 
-    const session = memoryStore.get(sessionId);
-
+    const session = await sessionRepository.findSessionById(sessionId);
     if (!session) return null;
 
-    if (session.expiresAt < new Date()) {
-        memoryStore.delete(sessionId);
-        return null;
-    }
-
+    sessionCache.set(sessionId, { session, expiresAt: Date.now() + MEMORY_CACHE_TTL_MS });
     return session;
 }
 
@@ -189,108 +92,57 @@ export async function updateSession(
     sessionId: string,
     data: Partial<Pick<Session, 'accessToken' | 'refreshToken'>>
 ): Promise<boolean> {
-    const session = await getSession(sessionId);
+    sessionCache.delete(sessionId);
 
+    const session = await getSession(sessionId);
     if (!session) return false;
 
-    const pool = getPool();
-
-    if (pool) {
-        await ensureTable();
-
-        const updates: string[] = [];
-        const values: (string | undefined)[] = [];
-        let paramIndex = 1;
-
-        if (data.accessToken !== undefined) {
-            updates.push(`access_token = $${paramIndex++}`);
-            values.push(data.accessToken);
-        }
-        if (data.refreshToken !== undefined) {
-            updates.push(`refresh_token = $${paramIndex++}`);
-            values.push(data.refreshToken);
-        }
-
-        if (updates.length === 0) return true;
-
-        values.push(sessionId);
-        await pool.query(
-            `UPDATE sessions SET ${updates.join(', ')} WHERE id = $${paramIndex}`,
-            values
-        );
-    } else {
-        const updatedSession: Session = {
-            ...session,
-            ...data,
-        };
-        memoryStore.set(sessionId, updatedSession);
+    if (!isDbAvailable()) {
+        memoryStore.set(sessionId, { ...session, ...data });
+        return true;
     }
 
-    return true;
+    return sessionRepository.updateSession(sessionId, data);
 }
 
 export async function deleteSession(sessionId: string): Promise<boolean> {
-    const session = await getSession(sessionId);
+    sessionCache.delete(sessionId);
 
+    const session = await getSession(sessionId);
     if (!session) return false;
 
-    const pool = getPool();
-
-    if (pool) {
-        await ensureTable();
-        await pool.query('DELETE FROM sessions WHERE id = $1', [sessionId]);
-    } else {
+    if (!isDbAvailable()) {
         memoryStore.delete(sessionId);
+        return true;
     }
 
-    return true;
+    return sessionRepository.deleteSession(sessionId);
 }
 
 export async function deleteUserSessions(userId: string): Promise<number> {
-    const pool = getPool();
+    if (!isDbAvailable()) {
+        const sessionsToDelete = [...memoryStore.entries()]
+            .filter(([, session]) => session.userId === userId)
+            .map(([id]) => id);
 
-    if (pool) {
-        await ensureTable();
-        const result = await pool.query(
-            'DELETE FROM sessions WHERE user_id = $1',
-            [userId]
-        );
-        return result.rowCount || 0;
+        sessionsToDelete.forEach(id => memoryStore.delete(id));
+        return sessionsToDelete.length;
     }
 
-    let count = 0;
-    for (const [id, session] of memoryStore) {
-        if (session.userId === userId) {
-            memoryStore.delete(id);
-            count++;
-        }
-    }
-
-    return count;
+    return sessionRepository.deleteUserSessions(userId);
 }
 
-/**
- * Clean up expired sessions (call periodically)
- */
+
 export async function cleanupExpiredSessions(): Promise<number> {
-    const pool = getPool();
+    if (!isDbAvailable()) {
+        const now = new Date();
+        const expiredSessions = [...memoryStore.entries()]
+            .filter(([, session]) => session.expiresAt < now)
+            .map(([id]) => id);
 
-    if (pool) {
-        await ensureTable();
-        const result = await pool.query(
-            'DELETE FROM sessions WHERE expires_at < NOW()'
-        );
-        return result.rowCount || 0;
+        expiredSessions.forEach(id => memoryStore.delete(id));
+        return expiredSessions.length;
     }
 
-    let count = 0;
-    const now = new Date();
-    for (const [id, session] of memoryStore) {
-        if (session.expiresAt < now) {
-            memoryStore.delete(id);
-            count++;
-        }
-    }
-
-    return count;
+    return sessionRepository.deleteExpiredSessions();
 }

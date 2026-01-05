@@ -9,6 +9,7 @@ import { eq, desc, sql, and } from 'drizzle-orm';
 import { db } from '~/server/utils/db';
 import { decks } from '~/server/db/tables/decks';
 import { cards } from '~/server/db/tables/cards';
+import { getOrSet, del as delCache } from '~/server/utils/cache.service';
 import type { Deck, DeckWithCardCount, DeckStatus } from './deck.types';
 
 
@@ -36,12 +37,14 @@ export async function getDecksByUser(userId: string): Promise<DeckWithCardCount[
 }
 
 export async function getDeckById(deckId: string): Promise<Deck | undefined> {
-    const result = await (db as any)
-        .select()
-        .from(decks)
-        .where(eq(decks.id, deckId));
+    return getOrSet(`deck:${deckId}`, async () => {
+        const result = await (db as any)
+            .select()
+            .from(decks)
+            .where(eq(decks.id, deckId));
 
-    return result[0] as Deck | undefined;
+        return result[0] as Deck | undefined;
+    });
 }
 
 export async function countDecksByUser(userId: string): Promise<number> {
@@ -92,6 +95,9 @@ export async function updateDeckStatus(
     status: DeckStatus,
     errorMessage?: string
 ): Promise<Deck | undefined> {
+    // Invalidate cache
+    await delCache(`deck:${deckId}`);
+
     const result = await (db as any)
         .update(decks)
         .set({
@@ -118,6 +124,9 @@ export async function getDeckByR2Key(r2Key: string): Promise<Deck | undefined> {
 }
 
 export async function deleteDeck(deckId: string): Promise<boolean> {
+    // Invalidate cache
+    await delCache(`deck:${deckId}`);
+
     const result = await (db as any)
         .delete(decks)
         .where(eq(decks.id, deckId))

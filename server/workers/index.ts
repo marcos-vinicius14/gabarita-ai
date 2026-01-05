@@ -32,11 +32,13 @@ async function main() {
         taskDirectory,
         concurrency: 5,
         pollInterval: 1000,
+        crontab: [
+            '0 * * * * cleanup',
+        ].join('\n'),
     });
 
     console.log('[Worker] Graphile Worker started and listening for jobs');
 
-    // Graceful shutdown
     const shutdown = async () => {
         console.log('[Worker] Shutting down...');
         await runner.stop();
@@ -48,7 +50,6 @@ async function main() {
     process.on('SIGTERM', shutdown);
     process.on('SIGINT', shutdown);
 
-    // Keep the process running
     await runner.promise;
 }
 

@@ -12,12 +12,14 @@
 import type { Task, JobHelpers } from 'graphile-worker';
 import { PDFParse } from 'pdf-parse';
 import { generateText, embed } from 'ai';
+import { createHash } from 'crypto';
 import { getGoogleAI } from '../utils/ai';
 import { db } from '../utils/db';
 import { cards } from '../db/tables/cards';
 import { downloadBufferFromR2, deleteFromR2 } from '../utils/storage';
 import { updateDeckStatus, getDeckById } from '../domain/decks/deck.repository';
 import { publishDeckStatus, closePublisher } from '../utils/pubsub';
+import { getOrSet } from '../utils/cache.service';
 import type { DeckGenerationJobData } from '../utils/queue';
 
 interface GeneratedCard {
@@ -80,9 +82,16 @@ async function generateFlashcardsFromText(
     maxCards: number = 20,
     logger: JobHelpers['logger']
 ): Promise<GeneratedCard[]> {
-    const google = getGoogleAI();
+    const contentHash = createHash('sha256')
+        .update(text.substring(0, 1000) + topic + maxCards)
+        .digest('hex')
+        .substring(0, 16);
+    const cacheKey = `ai:flashcards:${contentHash}`;
 
-    const prompt = `Você é um especialista em criar flashcards de estudo eficazes.
+    return getOrSet(cacheKey, async () => {
+        const google = getGoogleAI();
+
+        const prompt = `Você é um especialista em criar flashcards de estudo eficazes.
 
 Com base no seguinte texto extraído de um PDF sobre "${topic}", crie até ${maxCards} flashcards de alta qualidade.
 
@@ -104,84 +113,85 @@ Retorne APENAS um array JSON válido com os flashcards no formato:
 
 Não inclua explicações, markdown ou código, apenas o JSON puro.`;
 
-    const result = await generateText({
-        model: google('gemini-3.0-flash'),
-        prompt,
-        temperature: 0.7,
-        maxTokens: 4000,
-    });
+        const result = await generateText({
+            model: google('gemini-3.0-flash'),
+            prompt,
+            temperature: 0.7,
+            maxTokens: 4000,
+        });
 
-    let jsonText = result.text.trim();
+        let jsonText = result.text.trim();
 
-    logger.debug(`Raw AI response length: ${jsonText.length}`);
+        logger.debug(`Raw AI response length: ${jsonText.length}`);
 
-    const extractFromCodeBlock = (text: string): string => {
-        const completeMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/);
-        if (completeMatch) {
-            logger.debug('Extracted from complete code block');
-            return completeMatch[1].trim();
+        const extractFromCodeBlock = (text: string): string => {
+            const completeMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/);
+            if (completeMatch) {
+                logger.debug('Extracted from complete code block');
+                return completeMatch[1].trim();
+            }
+
+            const incompleteMatch = text.match(/```(?:json)?\s*([\s\S]*)/);
+            if (incompleteMatch) {
+                logger.debug('Extracted from incomplete code block (truncated response)');
+                return incompleteMatch[1].trim();
+            }
+
+            return text;
+        };
+
+        jsonText = extractFromCodeBlock(jsonText);
+
+        const extractJsonArray = (text: string): string | null => {
+            const completeMatch = text.match(/\[[\s\S]*\]/);
+            if (completeMatch) return completeMatch[0];
+
+            const arrayStart = text.indexOf('[');
+            if (arrayStart === -1) return null;
+
+            const partialArray = text.substring(arrayStart);
+            const lastCompleteObject = partialArray.lastIndexOf('}');
+            if (lastCompleteObject === -1) return null;
+
+            logger.debug('Reconstructed array from partial response');
+            return partialArray.substring(0, lastCompleteObject + 1) + ']';
+        };
+
+        const jsonArray = extractJsonArray(jsonText);
+
+        if (!jsonArray) {
+            logger.error(`No JSON array found in response: ${jsonText.substring(0, 1000)}`);
+            throw new Error('Failed to parse AI response as JSON - no array found');
         }
 
-        const incompleteMatch = text.match(/```(?:json)?\s*([\s\S]*)/);
-        if (incompleteMatch) {
-            logger.debug('Extracted from incomplete code block (truncated response)');
-            return incompleteMatch[1].trim();
-        }
+        const parseFlashcards = (json: string): GeneratedCard[] => {
+            const parsed = JSON.parse(json);
+            if (!Array.isArray(parsed)) {
+                throw new Error('AI response is not an array');
+            }
+            return parsed;
+        };
 
-        return text;
-    };
+        const flashcards = (() => {
+            try {
+                return parseFlashcards(jsonArray);
+            } catch (parseError) {
+                logger.error(`JSON parse error: ${parseError}`);
+                throw new Error('Failed to parse AI response as JSON - invalid JSON syntax');
+            }
+        })();
 
-    jsonText = extractFromCodeBlock(jsonText);
+        logger.info(`Successfully parsed ${flashcards.length} flashcards from AI`);
 
-    const extractJsonArray = (text: string): string | null => {
-        const completeMatch = text.match(/\[[\s\S]*\]/);
-        if (completeMatch) return completeMatch[0];
+        // Validate card structure using filter
+        const isValidCard = (card: GeneratedCard): boolean =>
+            typeof card.front === 'string' &&
+            typeof card.back === 'string' &&
+            card.front.trim().length > 0 &&
+            card.back.trim().length > 0;
 
-        const arrayStart = text.indexOf('[');
-        if (arrayStart === -1) return null;
-
-        const partialArray = text.substring(arrayStart);
-        const lastCompleteObject = partialArray.lastIndexOf('}');
-        if (lastCompleteObject === -1) return null;
-
-        logger.debug('Reconstructed array from partial response');
-        return partialArray.substring(0, lastCompleteObject + 1) + ']';
-    };
-
-    const jsonArray = extractJsonArray(jsonText);
-
-    if (!jsonArray) {
-        logger.error(`No JSON array found in response: ${jsonText.substring(0, 1000)}`);
-        throw new Error('Failed to parse AI response as JSON - no array found');
-    }
-
-    const parseFlashcards = (json: string): GeneratedCard[] => {
-        const parsed = JSON.parse(json);
-        if (!Array.isArray(parsed)) {
-            throw new Error('AI response is not an array');
-        }
-        return parsed;
-    };
-
-    const flashcards = (() => {
-        try {
-            return parseFlashcards(jsonArray);
-        } catch (parseError) {
-            logger.error(`JSON parse error: ${parseError}`);
-            throw new Error('Failed to parse AI response as JSON - invalid JSON syntax');
-        }
-    })();
-
-    logger.info(`Successfully parsed ${flashcards.length} flashcards from AI`);
-
-    // Validate card structure using filter
-    const isValidCard = (card: GeneratedCard): boolean =>
-        typeof card.front === 'string' &&
-        typeof card.back === 'string' &&
-        card.front.trim().length > 0 &&
-        card.back.trim().length > 0;
-
-    return flashcards.filter(isValidCard);
+        return flashcards.filter(isValidCard);
+    }, 600); // 10 minutes TTL for AI responses
 }
 
 /**
