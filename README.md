@@ -43,12 +43,41 @@ Este projeto utiliza a abordagem **"Postgres Everything"** - onde o PostgreSQL �
 
 - **Frontend**: Nuxt 3 + Vue 3 + Nuxt UI + TailwindCSS
 - **Backend**: Nitro (API Server)
+- **API Gateway**: Nginx (rate limiting, connection limiting, reverse proxy)
 - **Database**: PostgreSQL 16 + pgvector (embeddings)
 - **Queue**: pg-boss
 - **Real-time**: PostgreSQL LISTEN/NOTIFY + WebSocket
 - **IA**: Google Gemini (geração de cards + embeddings)
 - **Storage**: Cloudflare R2 (PDFs)
 - **Auth**: JWT + Session cookies
+
+### Nginx API Gateway
+
+O projeto utiliza Nginx como API Gateway, fornecendo:
+
+- **Geographic IP Restriction**: Acesso restrito apenas a IPs brasileiros
+- **Rate Limiting**: Proteção contra abuso de API
+  - API geral: 100 requisições/minuto
+  - Uploads: 10 requisições/minuto
+  - Autenticação: 20 requisições/minuto
+- **Connection Limiting**: Máximo de 20 conexões simultâneas por IP
+- **Security Headers**: CORS, CSP, X-Frame-Options, etc.
+- **Reverse Proxy**: Roteamento otimizado para aplicação Nuxt
+- **Logs Estruturados**: JSON format para análise e monitoramento
+
+**Arquitetura:**
+```
+Cliente (Brasil) → Nginx (porta 80/443) → Nuxt App (porta 3000 interna) → PostgreSQL
+```
+
+> [!NOTE]
+> A aplicação é acessada via **porta 80** (Nginx), não mais diretamente pela porta 3000 do Nuxt.
+
+> [!IMPORTANT]
+> **Geo-Blocking Ativo**: Apenas IPs brasileiros podem acessar a aplicação. Acessos de outros países receberão erro 403.
+
+📚 **Documentação completa**: [docs/nginx-guide.md](docs/nginx-guide.md)
+
 
 ## 📋 Requisitos
 
@@ -100,7 +129,7 @@ NUXT_PUBLIC_WS_URL="ws://localhost:3002"
 ### Iniciar serviços
 
 ```bash
-# 1. Subir PostgreSQL
+# 1. Subir PostgreSQL e Nginx
 docker compose up -d
 
 # 2. Rodar migrations
@@ -114,7 +143,14 @@ pnpm worker
 
 # 5. Iniciar WebSocket server (terminal 3)
 pnpm ws
+
+# Acessar aplicação
+# http://localhost (via Nginx)
 ```
+
+> [!IMPORTANT]
+> A aplicação agora é acessada via **http://localhost** (porta 80 do Nginx), não mais pela porta 3000 direta.
+
 
 ### Comandos úteis
 
