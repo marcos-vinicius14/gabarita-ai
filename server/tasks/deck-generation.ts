@@ -3,23 +3,23 @@
  *
  * Processes uploaded PDFs:
  * 1. Downloads from R2 (with gunzip decompression)
- * 2. Extracts text using pdf-parse
+ * 2. Extracts text using pdfjs-dist with parallel Worker Threads
  * 3. Generates flashcards using AI (Gemini)
  * 4. Batch inserts cards into PostgreSQL
  * 5. Updates deck status
  */
 
 import type { Task, JobHelpers } from 'graphile-worker';
-import { PDFParse } from 'pdf-parse';
 import { generateText, embed } from 'ai';
 import { createHash } from 'crypto';
 import { getGoogleAI } from '../utils/ai';
 import { db } from '../utils/db';
 import { cards } from '../db/tables/cards';
-import { downloadBufferFromR2, deleteFromR2 } from '../utils/storage';
+import { downloadStreamFromR2, deleteFromR2 } from '../utils/storage';
 import { updateDeckStatus, getDeckById } from '../domain/decks/deck.repository';
 import { publishDeckStatus, closePublisher } from '../utils/pubsub';
 import { getOrSet } from '../utils/cache.service';
+import { extractTextFromPdf } from '../services/pdf-extractor.service';
 import type { DeckGenerationJobData } from '../utils/queue';
 
 interface GeneratedCard {
@@ -67,13 +67,15 @@ function getUserFriendlyErrorMessage(error: Error): string {
     return matched?.response ?? DEFAULT_ERROR_MESSAGE;
 }
 
-async function extractTextFromPdf(buffer: Buffer): Promise<string> {
-    const pdfParse = new PDFParse({ data: buffer });
-    const result = await pdfParse.getText();
-
-    await pdfParse.destroy();
-
-    return result.text;
+/**
+ * Convert a readable stream to ArrayBuffer for PDF processing
+ */
+async function streamToArrayBuffer(stream: NodeJS.ReadableStream): Promise<ArrayBuffer> {
+    const chunks: Uint8Array[] = [];
+    for await (const chunk of stream) {
+        chunks.push(chunk as Uint8Array);
+    }
+    return Buffer.concat(chunks).buffer;
 }
 
 async function generateFlashcardsFromText(
@@ -239,9 +241,7 @@ async function insertCards(deckId: string, generatedCards: GeneratedCard[], logg
     return cardValues.length;
 }
 
-/**
- * Graphile Worker Task Executor
- */
+
 const task: Task = async (payload, helpers) => {
     const { deckId, userId, r2Key, originalFilename } = payload as DeckGenerationJobData;
     const { logger, job } = helpers;
@@ -258,11 +258,20 @@ const task: Task = async (payload, helpers) => {
         logger.info(`Downloading from R2: ${r2Key}`);
         await publishDeckStatus(deckId, userId, 'processing', { progress: 'Baixando arquivo...' });
 
-        const pdfBuffer = await downloadBufferFromR2(r2Key);
-        logger.info(`Downloaded ${pdfBuffer.length} bytes`);
+        const pdfStream = await downloadStreamFromR2(r2Key);
+        const pdfArrayBuffer = await streamToArrayBuffer(pdfStream);
+        logger.info(`Downloaded ${pdfArrayBuffer.byteLength} bytes`);
 
-        await publishDeckStatus(deckId, userId, 'processing', { progress: 'Extraindo texto do PDF...' });
-        const text = await extractTextFromPdf(pdfBuffer);
+        // Extract text with progress reporting
+        const text = await extractTextFromPdf(pdfArrayBuffer, {
+            onProgress: (progress) => {
+                if (progress.phase === 'extracting') {
+                    publishDeckStatus(deckId, userId, 'processing', {
+                        progress: `Extraindo página ${progress.currentPage}/${progress.totalPages}...`
+                    });
+                }
+            }
+        });
 
         logger.info(`Extracted ${text.length} characters`);
 
@@ -305,7 +314,7 @@ const task: Task = async (payload, helpers) => {
         await updateDeckStatus(deckId, 'failed', userMessage);
         await publishDeckStatus(deckId, userId, 'failed', { errorMessage: userMessage });
 
-        throw error; // Re-throw for Graphile Worker retry handling
+        throw error;
     }
 };
 

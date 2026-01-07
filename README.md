@@ -126,26 +126,19 @@ NUXT_PUBLIC_WS_URL="ws://localhost:3002"
 
 ## 🛠️ Desenvolvimento
 
-### Iniciar serviços
+### Como Rodar
 
 ```bash
-# 1. Subir PostgreSQL e Nginx
-docker compose up -d
-
-# 2. Rodar migrations
-pnpm db:push
-
-# 3. Iniciar app (terminal 1)
+# Servir em desenvolvimento (com Docker para Banco e Nginx)
+docker compose up -d db nginx
 pnpm dev
 
-# 4. Iniciar worker de processamento (terminal 2)
-pnpm worker
-
-# 5. Iniciar WebSocket server (terminal 3)
-pnpm ws
+# Servir em produção (Tudo via Docker + PM2)
+docker compose up -d --build
+```
 
 # Acessar aplicação
-# http://localhost (via Nginx)
+# http://localhost:8080 (via Nginx)
 ```
 
 > [!IMPORTANT]

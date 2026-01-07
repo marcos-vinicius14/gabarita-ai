@@ -27,9 +27,16 @@ async function main() {
     console.log('[Worker] Task directory:', taskDirectory);
     console.log('[Worker] Using LISTEN/NOTIFY for instant job pickup');
 
+    // Load tasks explicitly to avoid file extension issues in Docker/TSX
+    const deckGenerationTask = (await import('../tasks/deck-generation.ts')).default;
+    const cleanupTask = (await import('../tasks/cleanup.ts')).default;
+
     const runner: Runner = await run({
         connectionString,
-        taskDirectory,
+        taskList: {
+            'deck-generation': deckGenerationTask,
+            'cleanup': cleanupTask,
+        },
         concurrency: 5,
         pollInterval: 1000,
         crontab: [
