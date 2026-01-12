@@ -8,7 +8,7 @@
  * Data loss on crash is acceptable for sessions.
  */
 
-import { pgTable, text, timestamp, index } from 'drizzle-orm/pg-core';
+import { pgTable, text, timestamp, index, uuid } from 'drizzle-orm/pg-core';
 import { users } from './users';
 
 /**
@@ -19,7 +19,7 @@ import { users } from './users';
  */
 export const sessions = pgTable('tb_sessions', {
     id: text('id').primaryKey(),
-    userId: text('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+    userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
     accessToken: text('access_token').notNull(),
     refreshToken: text('refresh_token').notNull(),
     expiresAt: timestamp('expires_at').notNull(),

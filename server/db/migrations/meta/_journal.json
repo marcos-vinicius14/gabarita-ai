@@ -78,6 +78,13 @@
       "when": 1767640448711,
       "tag": "0010_panoramic_blade",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1767754151107,
+      "tag": "0011_shallow_ironclad",
+      "breakpoints": true
     }
   ]
 }

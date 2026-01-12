@@ -12,7 +12,6 @@ import { generateRandomToken } from './tokens';
 import * as sessionRepository from '~/server/domain/auth/session.repository';
 import type { Session, SessionData } from '~/server/domain/auth/session.types';
 
-// Re-export types for consumers
 export type { Session, SessionData };
 
 
@@ -81,7 +80,9 @@ export async function getSession(sessionId: string): Promise<Session | null> {
         return session;
     }
 
+    console.log('[Session] Looking up session in DB:', sessionId.substring(0, 16) + '...');
     const session = await sessionRepository.findSessionById(sessionId);
+    console.log('[Session] DB lookup result:', session ? 'FOUND' : 'NOT FOUND');
     if (!session) return null;
 
     sessionCache.set(sessionId, { session, expiresAt: Date.now() + MEMORY_CACHE_TTL_MS });

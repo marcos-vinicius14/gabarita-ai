@@ -30,7 +30,7 @@ import {
     ForbiddenException,
 } from '~/server/utils/exceptions';
 
-const UPLOAD_TIMEOUT_MS = 30_000;
+const UPLOAD_TIMEOUT_MS = 120_000; // 2 minutes for slow connections
 
 export default defineEventHandler(async (event) => {
     try {

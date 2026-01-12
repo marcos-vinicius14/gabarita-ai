@@ -14,6 +14,9 @@ RUN pnpm install
 # Copia o restante do código
 COPY . .
 
+# Build da aplicação Nuxt para produção
+RUN pnpm build
+
 # Expõe a porta do Nuxt
 EXPOSE 3000
 

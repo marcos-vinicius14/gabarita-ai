@@ -10,6 +10,10 @@ import { drizzle } from 'drizzle-orm/node-postgres';
 import pg from 'pg';
 import * as schema from '../db/schema';
 
+// Lazy-initialized database connection
+let _db: ReturnType<typeof drizzle> | null = null;
+let _pool: pg.Pool | null = null;
+
 // Get database URL - works both in Nuxt context and standalone worker
 function getDatabaseUrl(): string {
     let dbUrl: string | undefined;
@@ -33,11 +37,22 @@ function getDatabaseUrl(): string {
     return dbUrl;
 }
 
-const connString = getDatabaseUrl();
+function initDb() {
+    if (_db) return _db;
 
-console.log('[DB] Initializing PostgreSQL connection...');
+    const connString = getDatabaseUrl();
+    console.log('[DB] Initializing PostgreSQL connection...');
 
-const pool = new pg.Pool({ connectionString: connString });
+    _pool = new pg.Pool({ connectionString: connString });
+    _db = drizzle(_pool, { schema });
 
-export const db = drizzle(pool, { schema });
+    return _db;
+}
+
+export const db = new Proxy({} as ReturnType<typeof drizzle>, {
+    get(_, prop) {
+        const instance = initDb();
+        return (instance as any)[prop];
+    }
+});
 

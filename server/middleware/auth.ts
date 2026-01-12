@@ -45,11 +45,21 @@ export default defineEventHandler(async (event) => {
 
     const sessionId = getCookie(event, SESSION_COOKIE.name);
 
+    // Debug logging for auth issues
+    const allCookies = getHeader(event, 'cookie');
+    console.log('[Auth Debug]', {
+        path,
+        sessionCookieName: SESSION_COOKIE.name,
+        sessionId: sessionId ? `${sessionId.substring(0, 10)}...` : 'NOT FOUND',
+        allCookies: allCookies ? allCookies.substring(0, 100) : 'NO COOKIES',
+    });
+
     if (!sessionId) {
         return;
     }
 
     const session = await getSession(sessionId);
+    console.log('[Auth Debug] Session lookup:', session ? 'FOUND' : 'NOT FOUND');
 
     if (!session) {
         deleteCookie(event, SESSION_COOKIE.name, { path: '/' });

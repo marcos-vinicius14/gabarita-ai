@@ -1,89 +1,114 @@
-# Guia de Inicialização - PM2 e Nginx
+# Guia de Startup - Desenvolvimento e Produção
 
-Este guia detalha o novo fluxo para iniciar o projeto Gabarita AI combinando o **PM2** (para gerenciar os processos da aplicação) e o **Nginx** (como API Gateway e Restrição Geográfica).
-
-## Arquitetura de Inicialização
-
-Com a introdução do Nginx como API Gateway, o fluxo de inicialização mudou. O Nginx agora é a porta de entrada única (portas 80/443), e ele encaminha as requisições para os processos gerenciados pelo PM2.
-
-### Componentes
-
-1.  **Docker**: Gerencia a Infraestrutura (PostgreSQL) e o Geoblocking (Nginx).
-2.  **PM2**: Gerencia a Aplicação (Nuxt, WebSocket e Worker).
+Este documento descreve como iniciar o ambiente de desenvolvimento local e como funciona o deploy em produção.
 
 ---
 
-## Fluxo de Inicialização (Simplificado)
+## 🖥️ Desenvolvimento Local (Híbrido)
 
-Com a dockerização completa, você não precisa mais gerenciar o PM2 no host. Tudo é orquestrado pelo Docker.
+No ambiente de desenvolvimento local (especialmente com Podman rootless), usamos uma configuração híbrida:
+- **Docker**: Apenas o banco de dados PostgreSQL
+- **Host**: Nuxt App + PM2 (para ter acesso direto à rede e ao R2)
 
-### 1. Build e Inicialização Total
-Execute um único comando para construir as imagens e subir todos os serviços (Banco, App/PM2, Nginx):
+### Passo a Passo
+
 ```bash
-docker compose up -d --build
+# 1. Subir apenas o banco de dados
+docker compose -f compose.dev.yaml up -d
+
+# 2. Instalar dependências (se necessário)
+pnpm install
+
+# 3. Aplicar migrações do banco
+pnpm db:push
+
+# 4. Iniciar a aplicação com PM2
+pnpm pm2
+
+# 5. Acompanhar logs
+pm2 logs
 ```
-Este comando agora iniciará:
-*   **Banco de Dados** (PostgreSQL)
-*   **Nginx Gateway** (Com Geo-blocking)
-*   **Aplicação Nuxt** (Via PM2-runtime dentro do Docker)
-    *   **api**: Servidor Nuxt
-    *   **websocket**: Servidor de WebSockets
-    *   **worker-deck-processor**: Processador de PDFs
 
-> [!NOTE]
-> O PM2 gerencia internamente os 3 processos da aplicação dentro do container `gabarita_app`.
+### Acessar Aplicação
+- **App**: http://localhost:3000
+- **WebSocket**: ws://localhost:3002
+
+### Parar Ambiente
+```bash
+pm2 stop all
+docker compose -f compose.dev.yaml down
+```
 
 ---
 
-## Comandos Úteis
+## 🚀 Produção (VPS Dedicada)
 
-### Monitoramento
+Em uma VPS com Docker instalado com privilégios root (não rootless), **tudo roda dentro do Docker** sem problemas de conectividade.
+
+### Por que funciona em produção?
+
+| Característica | Podman Rootless (Dev) | Docker Root (Prod) |
+|----------------|----------------------|-------------------|
+| Isolamento de rede | Mais restritivo | Acesso completo |
+| Cloudflare R2 | ⚠️ Pode falhar | ✅ Funciona |
+| Nginx reverse proxy | ✅ | ✅ |
+| PM2 dentro do container | ✅ | ✅ |
+
+### Deploy em Produção
+
 ```bash
-# Ver status de todos os containers
+# Na VPS, clone o repositório e configure o .env
+
+# Build e iniciar todos os serviços
+docker compose up -d --build
+
+# Verificar status
 docker compose ps
 
-# Ver processos do PM2 dentro do container
-docker exec gabarita_app pm2 list
-
-# Logs em tempo real de toda a stack
-docker compose logs -f
-
-# Logs específicos do App/PM2
+# Ver logs
 docker compose logs -f app
 ```
 
-### Reinicialização
-```bash
-# Reiniciar apenas os processos do PM2 (sem derrubar o container)
-docker exec gabarita_app pm2 reload all
+### Arquitetura em Produção
 
-# Reiniciar o Nginx (após mudanças de regras de IP)
-docker exec gabarita_nginx nginx -s reload
+```
+Usuário → Nginx (8080) → Nuxt App (3000)
+                      ↘ WebSocket (3002)
+                      
+App Container (PM2):
+  - API (cluster mode)
+  - WebSocket (fork mode)
+  - Worker (fork mode)
+
+Conexões:
+  - App → PostgreSQL (via Docker network)
+  - App → Cloudflare R2 (via internet)
+```
+
+### Comandos Úteis em Produção
+
+```bash
+# Reiniciar app após mudanças
+docker compose restart app
+
+# Rebuild completo
+docker compose down && docker compose up -d --build
+
+# Ver processos PM2 dentro do container
+docker exec gabarita_app pm2 list
+
+# Logs do PM2
+docker exec gabarita_app pm2 logs
 ```
 
 ---
 
-### Resumo do Fluxo de Requisições
+## 📁 Arquivos de Configuração
 
-```mermaid
-graph LR
-    User[Usuário] -->|Porta 8080/8443| Nginx[Nginx Docker]
-    Nginx -->|Geo-Check BR| Check{IP Brasileiro?}
-    Check -->|Não| Block[403 Forbidden]
-    Check -->|Sim| Proxy[Roteamento]
-    Proxy -->|Porta 3000| PM2_Api[PM2: Nuxt App]
-    Proxy -->|WebSocket| PM2_WS[PM2: WebSocket]
-    PM2_Api -->|Tarefa| Worker[PM2: Worker Processor]
-```
-
-# Acessar aplicação
-# http://localhost:8080 (via Nginx)
-
-## Configuração de Rede (Dica)
-
-Para facilitar a comunicação entre o Nginx (Docker) e o PM2 (Host), você pode adicionar o host ao arquivo de configuração do Nginx ou usar a rede `host` no Docker se estiver no Linux.
-
-Se o Nginx não encontrar o app, verifique o log de erro:
-```bash
-docker exec gabarita_nginx tail -f /var/log/nginx/error.log
-```
+| Arquivo | Uso |
+|---------|-----|
+| `compose.yaml` | Produção (VPS) - todos os serviços |
+| `compose.dev.yaml` | Desenvolvimento - apenas DB |
+| `ecosystem.config.cjs` | Configuração do PM2 |
+| `docker/app/Dockerfile` | Imagem do App |
+| `docker/nginx/` | Configuração do Nginx |
