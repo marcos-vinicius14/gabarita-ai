@@ -8,12 +8,14 @@ This document defines the strict coding, architectural, and design rules for the
 
 | Layer | Technology |
 |-------|------------|
-| **Runtime** | Bun |
+| **Runtime** | Node.js (LTS) |
+| **Package Manager** | pnpm |
 | **Frontend/Backend** | Nuxt 3 (Vue.js) |
 | **UI Library** | Nuxt UI (`@nuxt/ui`) + TailwindCSS |
-| **Database** | PostgreSQL + pgvector |
+| **Database** | PostgreSQL (Neon) + pgvector |
 | **ORM** | Drizzle ORM |
 | **AI Provider** | Google Gemini (via Vercel AI SDK and LangChain) |
+| **Testing** | Node.js Native Test Runner (`node:test`) |
 
 ---
 
@@ -267,7 +269,7 @@ interface JoinResult {
 }
 
 // Validation
-const emailSchema = z.string().email('Email inválido')
+const emailSchema = z.string().email('Invalid email')
 
 // Store Definition
 export const useWaitlistStore = defineStore('waitlist', () => {
@@ -289,7 +291,7 @@ export const useWaitlistStore = defineStore('waitlist', () => {
         // Validate first
         const validation = emailSchema.safeParse(email.value)
         if (!validation.success) {
-            error.value = validation.error.errors[0]?.message ?? 'Erro'
+            error.value = validation.error.errors[0]?.message ?? 'Error'
             return { success: false, message: error.value }
         }
 
@@ -302,7 +304,7 @@ export const useWaitlistStore = defineStore('waitlist', () => {
             email.value = ''
             return { success: true, message: response.message }
         } catch {
-            error.value = 'Erro de conexão'
+            error.value = 'Connection error'
             return { success: false, message: error.value }
         } finally {
             loading.value = false
@@ -341,11 +343,11 @@ async function handleSubmit() {
     const result = await store.joinWaitlist()
     
     if (!result.success) {
-        toast.add({ title: 'Erro', description: result.message, color: 'red' })
+        toast.add({ title: 'Error', description: result.message, color: 'red' })
         return
     }
     
-    toast.add({ title: 'Sucesso!', description: result.message, color: 'green' })
+    toast.add({ title: 'Success!', description: result.message, color: 'green' })
     localEmail.value = ''
 }
 </script>
@@ -353,7 +355,899 @@ async function handleSubmit() {
 <template>
     <form @submit.prevent="handleSubmit">
         <UInput v-model="localEmail" :disabled="store.loading" />
-        <UButton type="submit" :loading="store.loading">Enviar</UButton>
+        <UButton type="submit" :loading="store.loading">Submit</UButton>
     </form>
 </template>
 ```
+
+---
+
+## 7. Testing (Node.js Native Test Runner)
+
+### 7.1 Test Framework
+
+- **Rule:** Use Node.js native test runner (`node:test`) for all unit tests.
+- **Rule:** Use native `node:assert` for assertions.
+- **Why:** Zero dependencies, built into Node.js, fast execution.
+
+### 7.2 Test File Location & Naming
+
+| Type | Location | Naming |
+|------|----------|--------|
+| **Unit Tests** | Colocated with source file | `*.test.ts` |
+| **Integration Tests** | `tests/integration/` | `*.integration.test.ts` |
+
+**Example Structure:**
+```
+server/
+├── domain/
+│   └── waitlist/
+│       ├── waitlist.service.ts
+│       ├── waitlist.service.test.ts     # Unit test colocated
+│       ├── waitlist.repository.ts
+│       └── waitlist.repository.test.ts
+tests/
+└── integration/
+    └── waitlist.integration.test.ts
+```
+
+### 7.3 Test Structure Template
+
+```typescript
+// waitlist.service.test.ts
+import { describe, it, mock, beforeEach } from 'node:test'
+import assert from 'node:assert'
+import { joinWaitlist } from './waitlist.service'
+
+describe('joinWaitlist', () => {
+    // === SETUP ===
+    let mockDb: any
+    let mockSaveEmail: any
+
+    beforeEach(() => {
+        // Reset mocks before each test
+        mockDb = {}
+        mockSaveEmail = mock.fn()
+    })
+
+    // === TESTS ===
+    it('should return success message for new email', async () => {
+        // Arrange
+        mockSaveEmail.mock.mockImplementation(() => 
+            Promise.resolve({ success: true, isNewEmail: true })
+        )
+
+        // Act
+        const result = await joinWaitlist(mockDb, 'test@example.com', 'landing')
+
+        // Assert
+        assert.strictEqual(result.success, true)
+        assert.ok(result.message.includes('list'))
+    })
+
+    it('should normalize email to lowercase', async () => {
+        // Arrange
+        mockSaveEmail.mock.mockImplementation(() => 
+            Promise.resolve({ success: true, isNewEmail: true })
+        )
+
+        // Act
+        await joinWaitlist(mockDb, 'TEST@EXAMPLE.COM', 'landing')
+
+        // Assert
+        const calledWith = mockSaveEmail.mock.calls[0].arguments
+        assert.strictEqual(calledWith[1], 'test@example.com')
+    })
+
+    it('should return different message for existing email', async () => {
+        // Arrange
+        mockSaveEmail.mock.mockImplementation(() => 
+            Promise.resolve({ success: true, isNewEmail: false })
+        )
+
+        // Act
+        const result = await joinWaitlist(mockDb, 'existing@example.com', 'landing')
+
+        // Assert
+        assert.strictEqual(result.success, true)
+        assert.ok(result.message.includes('already'))
+    })
+})
+```
+
+### 7.4 Mocking & Stubbing
+
+| Technique | When to Use | How |
+|-----------|-------------|-----|
+| **`mock.fn()`** | Mock function calls | `const fn = mock.fn()` |
+| **`mock.method()`** | Mock object methods | `mock.method(obj, 'methodName', mockFn)` |
+| **Stub Object** | Replace entire dependency | Create a plain object with mock methods |
+
+**Example - Mocking Database:**
+
+```typescript
+import { mock } from 'node:test'
+
+// Create a stub database
+const stubDb = {
+    insert: mock.fn(() => ({
+        values: mock.fn(() => Promise.resolve())
+    }))
+}
+
+// Use in tests
+await saveEmail(stubDb, 'test@example.com', 'source')
+assert.strictEqual(stubDb.insert.mock.calls.length, 1)
+```
+
+### 7.5 Running Tests
+
+```bash
+# Run all tests
+pnpm test
+
+# Run specific test file
+pnpm test server/domain/waitlist/waitlist.service.test.ts
+
+# Run with watch mode
+pnpm test --watch
+
+# Run with coverage
+pnpm test --experimental-test-coverage
+```
+
+### 7.6 Package.json Script
+
+```json
+{
+  "scripts": {
+    "test": "node --import tsx --test **/*.test.ts",
+    "test:watch": "node --import tsx --test --watch **/*.test.ts",
+    "test:coverage": "node --import tsx --test --experimental-test-coverage **/*.test.ts"
+  }
+}
+```
+
+### 7.7 Test Naming Convention
+
+- **Rule:** Use descriptive test names that explain the expected behavior.
+- **Rule:** Follow the pattern: `should [expected behavior] when [condition]`
+
+| ❌ Bad | ✅ Good |
+|-------|--------|
+| `test email` | `should normalize email to lowercase` |
+| `joinWaitlist works` | `should return success message for new email` |
+
+---
+
+## 8. Error Handling (Custom Exceptions)
+
+### 8.1 Exception Hierarchy
+
+- **Rule:** Use custom exception classes from `server/utils/exceptions/`.
+- **Rule:** NEVER throw generic `Error` objects in API routes.
+- **Rule:** All error messages MUST be user-friendly (localized for the target audience).
+
+| Layer | Exception Type |
+|-------|----------------|
+| **Base** | `HttpException` (abstract base class) |
+| **4xx** | `BadRequestException`, `UnauthorizedException`, `ForbiddenException`, `NotFoundException`, `ConflictException`, `ValidationException`, `TooManyRequestsException` |
+| **5xx** | `InternalServerException`, `ServiceUnavailableException` |
+| **Auth** | `InvalidCredentialsException`, `AccountLockedException`, `LoginRateLimitException`, `InvalidTokenException`, `TokenExpiredException` |
+
+### 8.2 Using Exceptions in API Routes
+
+```typescript
+// ✅ Correct: Use handleException + custom exceptions
+import { handleException, ValidationException } from '~/server/utils/exceptions';
+
+export default defineEventHandler(async (event) => {
+    try {
+        const parseResult = Schema.safeParse(body);
+        
+        if (!parseResult.success) {
+            throw new ValidationException('Please fix the validation errors.', errors);
+        }
+        
+        // ... happy path
+    } catch (error) {
+        return handleException(event, error);
+    }
+});
+```
+
+```typescript
+// ❌ Incorrect: Manual error handling
+setResponseStatus(event, 400);
+return { success: false, message: 'Bad Request' };
+```
+
+### 8.3 Exception Response Format
+
+All exceptions return a consistent JSON structure:
+
+```json
+{
+    "success": false,
+    "message": "User-friendly error message",
+    "code": "ERROR_CODE",
+    "timestamp": "2025-01-01T00:00:00.000Z"
+}
+```
+
+### 8.4 User-Friendly Error Messages
+
+| ❌ Technical | ✅ User-Friendly |
+|-------------|------------------|
+| `"400 Bad Request"` | `"Please fix the validation errors."` |
+| `"401 Unauthorized"` | `"Invalid email or password."` |
+| `"403 Forbidden"` | `"You don't have permission to perform this action."` |
+| `"429 Too Many Requests"` | `"Too many attempts. Please wait 5 minutes."` |
+| `"500 Internal Server Error"` | `"An unexpected error occurred. Please try again."` |
+
+### 8.5 Creating Domain-Specific Exceptions
+
+When creating new features, extend base exceptions with semantic meaning:
+
+```typescript
+// server/utils/exceptions/deck.exception.ts
+import { NotFoundException, ForbiddenException } from './http.exception';
+
+export class DeckNotFoundException extends NotFoundException {
+    constructor() {
+        super('Deck not found.', { code: 'DECK_NOT_FOUND' });
+    }
+}
+
+export class DeckAccessDeniedException extends ForbiddenException {
+    constructor() {
+        super('You don\'t have access to this deck.', { code: 'DECK_ACCESS_DENIED' });
+    }
+}
+```
+
+---
+
+## 9. SOLID Principles
+
+### 9.1 Single Responsibility Principle (SRP)
+
+- **Rule:** A class/module should have only ONE reason to change.
+- **Why:** Increases cohesion and makes maintenance and testing easier.
+
+| ❌ SRP Violation | ✅ Applying SRP |
+|------------------|-----------------|
+| `AuthController` that validates, authenticates, generates tokens, and saves logs | `AuthService` (logic), `TokenService` (tokens), `AuditLogger` (logs) |
+
+```typescript
+// ❌ Violation: Class does too many things
+class UserService {
+    async register(data) { /* validates, hashes, saves, sends email */ }
+    async sendEmail(user) { /* email logic */ }
+    async generateReport() { /* generates report */ }
+}
+
+// ✅ Correct: Separated responsibilities
+class UserService { async register(data) { /* registration only */ } }
+class EmailService { async send(to, template) { /* email only */ } }
+class ReportService { async generate() { /* reports only */ } }
+```
+
+### 9.2 Dependency Inversion Principle (DIP)
+
+- **Rule:** Depend on abstractions (interfaces), NOT on concrete implementations.
+- **Why:** Reduces coupling and makes testing with mocks easier.
+
+```typescript
+// ❌ Tight coupling: depends on concrete implementation
+class AuthService {
+    private repository = new PostgresUserRepository();
+}
+
+// ✅ Dependency inversion: depends on abstraction
+interface UserRepository {
+    findByEmail(email: string): Promise<User | null>;
+    create(data: CreateUserInput): Promise<User>;
+}
+
+class AuthService {
+    constructor(private repository: UserRepository) {}
+}
+```
+
+### 9.3 Interface Segregation Principle (ISP)
+
+- **Rule:** Create specific interfaces instead of a single generic interface.
+- **Why:** Clients should not depend on methods they don't use.
+
+```typescript
+// ❌ "Fat" interface
+interface Repository<T> {
+    find(): Promise<T[]>;
+    findById(id: string): Promise<T>;
+    create(data: T): Promise<T>;
+    update(id: string, data: T): Promise<T>;
+    delete(id: string): Promise<void>;
+    generateReport(): Promise<Report>;
+    sendNotification(): Promise<void>;
+}
+
+// ✅ Segregated interfaces
+interface ReadRepository<T> {
+    find(): Promise<T[]>;
+    findById(id: string): Promise<T>;
+}
+
+interface WriteRepository<T> {
+    create(data: T): Promise<T>;
+    update(id: string, data: T): Promise<T>;
+    delete(id: string): Promise<void>;
+}
+```
+
+---
+
+## 10. GRASP Patterns
+
+### 10.1 Information Expert
+
+- **Rule:** Assign responsibility to the class that has the information needed to fulfill it.
+- **Why:** Keeps data and behavior together (high cohesion).
+
+```typescript
+// ❌ Logic outside the expert
+function calculateDeckProgress(deck: Deck, reviews: Review[]): number {
+    return reviews.filter(r => r.deckId === deck.id).length / deck.totalCards;
+}
+
+// ✅ Deck is the expert - it has the information
+class Deck {
+    calculateProgress(): number {
+        return this.reviews.length / this.totalCards;
+    }
+}
+```
+
+### 10.2 Controller
+
+- **Rule:** Use a mediator object to receive system events.
+- **Why:** Separates user interface from business logic.
+
+```typescript
+// In Nuxt, API handlers act as Controllers
+// server/api/auth/login.post.ts (Controller)
+export default defineEventHandler(async (event) => {
+    const body = await readBody(event);
+    const result = await loginUser(body); // Delegates to Service
+    return result;
+});
+
+// server/domain/auth/auth.service.ts (Service - business logic)
+export async function loginUser(input: LoginInput): Promise<AuthResult> {
+    // All business logic here
+}
+```
+
+### 10.3 Indirection
+
+- **Rule:** Add an intermediate object between coupled components.
+- **Why:** Reduces direct dependency and makes substitution easier.
+
+```typescript
+// ❌ Component depends directly on database
+class AuthService {
+    async findUser(email: string) {
+        return await db.select().from(users).where(eq(users.email, email));
+    }
+}
+
+// ✅ Repository as indirection
+class AuthService {
+    constructor(private userRepository: UserRepository) {}
+    
+    async findUser(email: string) {
+        return await this.userRepository.findByEmail(email);
+    }
+}
+```
+
+---
+
+## 11. Design Patterns
+
+### 11.1 Dependency Injection
+
+- **Rule:** Provide dependencies externally, don't create them internally.
+- **Why:** Allows swapping implementations without changing code.
+
+```typescript
+// ✅ Dependency injection via parameters
+export function createAuthService(deps: {
+    userRepository: UserRepository;
+    tokenService: TokenService;
+    auditLogger: AuditLogger;
+}) {
+    return {
+        async login(input: LoginInput) {
+            const user = await deps.userRepository.findByEmail(input.email);
+            const token = await deps.tokenService.generate(user);
+            await deps.auditLogger.log('LOGIN', user.id);
+            return { token };
+        }
+    };
+}
+
+// Production usage
+const authService = createAuthService({
+    userRepository: new DrizzleUserRepository(db),
+    tokenService: new JwtTokenService(secret),
+    auditLogger: new DatabaseAuditLogger(db),
+});
+
+// Test usage
+const authService = createAuthService({
+    userRepository: mockUserRepository,
+    tokenService: mockTokenService,
+    auditLogger: mockAuditLogger,
+});
+```
+
+### 11.2 Strategy Pattern
+
+- **Rule:** Encapsulate interchangeable algorithms in separate classes.
+- **Why:** Allows swapping behaviors at runtime.
+
+```typescript
+// Review calculation strategies
+interface ReviewStrategy {
+    calculateNextReview(card: Card, rating: number): Date;
+}
+
+class FSRSStrategy implements ReviewStrategy {
+    calculateNextReview(card: Card, rating: number): Date {
+        // FSRS implementation
+    }
+}
+
+class SM2Strategy implements ReviewStrategy {
+    calculateNextReview(card: Card, rating: number): Date {
+        // SuperMemo 2 implementation
+    }
+}
+
+// Usage
+class ReviewService {
+    constructor(private strategy: ReviewStrategy) {}
+    
+    processReview(card: Card, rating: number) {
+        return this.strategy.calculateNextReview(card, rating);
+    }
+}
+```
+
+### 11.3 Facade Pattern
+
+- **Rule:** Provide a simplified interface for a complex system.
+- **Why:** Decouples the client from numerous internal classes.
+
+```typescript
+// Facade for authentication operations
+export const AuthFacade = {
+    async login(email: string, password: string) {
+        // Orchestrates: validation, rate limiting, authentication, tokens, audit
+        await rateLimiter.check(email);
+        const user = await userRepository.findByEmail(email);
+        const isValid = await passwordService.verify(user.hash, password);
+        const tokens = await tokenService.generatePair(user);
+        await auditLogger.log('LOGIN', user.id);
+        return tokens;
+    },
+    
+    async logout(token: string) { /* ... */ },
+    async refresh(refreshToken: string) { /* ... */ },
+};
+```
+
+### 11.4 Observer Pattern
+
+- **Rule:** Allow communication between objects via events.
+- **Why:** Decouples sender and receiver.
+
+```typescript
+// Event emitter for domain events
+type DomainEvents = {
+    'user:registered': { userId: string; email: string };
+    'deck:created': { deckId: string; userId: string };
+    'review:completed': { cardId: string; rating: number };
+};
+
+class EventBus {
+    private listeners = new Map<string, Function[]>();
+    
+    on<K extends keyof DomainEvents>(event: K, handler: (data: DomainEvents[K]) => void) {
+        if (!this.listeners.has(event)) this.listeners.set(event, []);
+        this.listeners.get(event)!.push(handler);
+    }
+    
+    emit<K extends keyof DomainEvents>(event: K, data: DomainEvents[K]) {
+        this.listeners.get(event)?.forEach(fn => fn(data));
+    }
+}
+
+// Usage
+eventBus.on('user:registered', async (data) => {
+    await emailService.sendWelcome(data.email);
+});
+```
+
+---
+
+## 12. Additional Best Practices
+
+### 12.1 Prefer Composition Over Inheritance
+
+- **Rule:** Use composition to assemble behaviors, not inheritance.
+- **Why:** Inheritance creates rigid coupling; composition is flexible.
+
+```typescript
+// ❌ Rigid inheritance
+class AdminUser extends User {
+    canDeleteUsers = true;
+}
+
+// ✅ Flexible composition
+interface Permissions {
+    canDeleteUsers: boolean;
+    canManageDecks: boolean;
+}
+
+class User {
+    constructor(
+        public id: string,
+        public email: string,
+        public permissions: Permissions
+    ) {}
+}
+
+const adminPermissions: Permissions = { canDeleteUsers: true, canManageDecks: true };
+const userPermissions: Permissions = { canDeleteUsers: false, canManageDecks: false };
+```
+
+### 12.2 Modularization
+
+- **Rule:** Divide the system into independent modules with clear interfaces.
+- **Why:** Facilitates maintenance, testing, and scalability.
+
+```
+server/domain/
+├── auth/                    # Authentication module
+│   ├── auth.service.ts
+│   ├── auth.repository.ts
+│   ├── auth.types.ts
+│   └── schema/
+├── decks/                   # Decks module
+│   ├── deck.service.ts
+│   ├── deck.repository.ts
+│   └── deck.types.ts
+└── review/                  # Review module
+    ├── review.service.ts
+    ├── fsrs.strategy.ts
+    └── review.types.ts
+```
+
+### 12.3 Minimize Shared State
+
+- **Rule:** Avoid global variables or implicitly shared state.
+- **Why:** Prevents side effects and race conditions.
+
+```typescript
+// ❌ Shared global state
+let currentUser: User | null = null;
+
+function setCurrentUser(user: User) {
+    currentUser = user;
+}
+
+// ✅ State passed explicitly
+function processRequest(user: User, request: Request) {
+    // user is passed explicitly
+}
+
+// ✅ Or encapsulated in context
+class RequestContext {
+    constructor(public user: User, public request: Request) {}
+}
+```
+
+### 12.4 Testability as a Requirement
+
+- **Rule:** Design code thinking about how it will be tested.
+- **Why:** Testable code is naturally more modular and decoupled.
+
+```typescript
+// ✅ Pure function - easy to test
+function calculateDueDate(lastReview: Date, interval: number): Date {
+    return new Date(lastReview.getTime() + interval * 24 * 60 * 60 * 1000);
+}
+
+// ✅ Injectable dependencies - easy to mock
+export function createReviewService(deps: {
+    cardRepository: CardRepository;
+    dateProvider: () => Date;
+}) {
+    return {
+        async scheduleReview(cardId: string) {
+            const card = await deps.cardRepository.findById(cardId);
+            const now = deps.dateProvider();
+            // ...
+        }
+    };
+}
+
+```
+
+---
+
+## 13. Discriminated Unions Pattern
+
+### 13.1 Overview
+
+- **Rule:** Use **Discriminated Unions** (Tagged Unions) for all API response types.
+- **Why:** Provides exhaustive type checking, eliminates null/undefined ambiguities, and makes error handling explicit.
+- **When:** API responses, result types, state machines, and any scenario with multiple possible outcomes.
+
+### 13.2 API Response Types
+
+Always define API responses as discriminated unions:
+
+```typescript
+// types/api.ts
+
+// Base response shapes
+interface SuccessResponse<T> {
+    success: true;
+    message: string;
+    data: T;
+}
+
+interface ErrorResponse {
+    success: false;
+    message: string;
+    code?: string;
+    errors?: Record<string, string[]>;
+}
+
+// Discriminated union type
+export type ApiResponse<T> = SuccessResponse<T> | ErrorResponse;
+
+// Example usage
+export type LoginResponse = ApiResponse<{ user: UserProfile }>;
+export type RegisterResponse = ApiResponse<undefined>;
+```
+
+### 13.3 Type Guards
+
+Always create type guard functions for runtime checking:
+
+```typescript
+// ✅ Type guard functions
+export function isSuccess<T>(response: ApiResponse<T>): response is SuccessResponse<T> {
+    return response.success === true;
+}
+
+export function isError<T>(response: ApiResponse<T>): response is ErrorResponse {
+    return response.success === false;
+}
+```
+
+### 13.4 Usage with Early Return Pattern
+
+Combine discriminated unions with early return for clean code:
+
+```typescript
+// ✅ Correct: Discriminated union + early return
+async function handleLogin() {
+    const result = await login({ email, password });
+    
+    // Type guard narrows the type
+    if (!isSuccess(result)) {
+        showError(result.message);  // TypeScript knows result is ErrorResponse
+        return;
+    }
+    
+    // TypeScript knows result is SuccessResponse<{ user: UserProfile }>
+    const { user } = result.data;
+    navigateTo('/dashboard');
+}
+```
+
+```typescript
+// ❌ Incorrect: Optional properties without union
+interface BadResponse {
+    success: boolean;
+    message: string;
+    data?: { user: UserProfile };  // Ambiguous - when is data present?
+    code?: string;
+}
+```
+
+### 13.5 TanStack Query Integration
+
+Use discriminated unions with TanStack Query:
+
+```typescript
+// composables/useAuth.ts
+import { useMutation, useQuery } from '@tanstack/vue-query';
+import { isSuccess, type LoginResponse, type LoginInput } from '~/types/auth';
+
+export function useAuth() {
+    const loginMutation = useMutation({
+        mutationFn: async (input: LoginInput): Promise<LoginResponse> => {
+            return await $fetch('/api/auth/login', {
+                method: 'POST',
+                body: input,
+            });
+        },
+    });
+
+    async function login(input: LoginInput) {
+        const result = await loginMutation.mutateAsync(input);
+        
+        if (isSuccess(result)) {
+            // TypeScript knows: result.data.user exists
+            return result.data.user;
+        }
+        
+        // TypeScript knows: result.message, result.code exist
+        throw new Error(result.message);
+    }
+
+    return { login, loginMutation };
+}
+```
+
+### 13.6 State Machine Example
+
+Use discriminated unions for complex state:
+
+```typescript
+// ✅ State machine with discriminated unions
+type AuthState =
+    | { status: 'idle' }
+    | { status: 'loading' }
+    | { status: 'authenticated'; user: UserProfile }
+    | { status: 'error'; message: string };
+
+function renderAuthUI(state: AuthState) {
+    switch (state.status) {
+        case 'idle':
+            return <LoginForm />;
+        case 'loading':
+            return <Spinner />;
+        case 'authenticated':
+            // TypeScript knows: state.user exists
+            return <Dashboard user={state.user} />;
+        case 'error':
+            // TypeScript knows: state.message exists
+            return <ErrorAlert message={state.message} />;
+    }
+}
+```
+
+### 13.7 Benefits Summary
+
+| Benefit | Description |
+|---------|-------------|
+| **Type Safety** | Compiler catches missing cases |
+| **Self-Documenting** | Types describe all possible states |
+| **No Null Checks** | No more `if (data?.user)` ambiguity |
+| **Exhaustive Handling** | `switch` statements require all cases |
+| **Refactoring Safety** | Adding new variants breaks compilation where unhandled |
+
+---
+
+## 14. If-Less Programming (Functional Patterns)
+
+### 14.1 Overview
+
+- **Rule:** Minimize `if/else` blocks using functional programming and polymorphic patterns.
+- **Rule:** Use early returns (guard clauses) for edge cases, then proceed with happy path.
+- **Why:** Reduces cognitive complexity, improves readability, and makes code more declarative.
+
+### 14.2 Object Maps (Strategy Pattern)
+
+Replace `if/else` or `switch` with objects that map keys to values or functions:
+
+```typescript
+// ❌ Avoid
+function getPlanLimit(role: string): number {
+    if (role === 'free') return 1;
+    if (role === 'trial') return 5;
+    if (role === 'pro') return Infinity;
+    return 1;
+}
+
+// ✅ Prefer
+const PLAN_LIMITS: Record<string, number> = {
+    free: 1,
+    trial: 5,
+    pro: Infinity,
+};
+const getPlanLimit = (role: string) => PLAN_LIMITS[role] ?? 1;
+```
+
+### 14.3 Optional Chaining + Nullish Coalescing
+
+```typescript
+// ❌ Avoid
+let name;
+if (user && user.profile && user.profile.name) {
+    name = user.profile.name;
+} else {
+    name = 'Anônimo';
+}
+
+// ✅ Prefer
+const name = user?.profile?.name ?? 'Anônimo';
+```
+
+### 14.4 Array Methods Over Loops
+
+```typescript
+// ❌ Avoid
+const results = [];
+for (const item of items) {
+    if (item.active) results.push(item.name);
+}
+
+// ✅ Prefer
+const results = items.filter(i => i.active).map(i => i.name);
+```
+
+### 14.5 Short-Circuit Evaluation
+
+```typescript
+// For simple conditional execution
+isValid && submit();
+
+// For default values
+const value = input || 'default';
+```
+
+> ⚠️ Use sparingly. Complex conditions hurt readability.
+
+### 14.6 Polymorphism via Object Maps
+
+```typescript
+// ❌ Avoid type checking
+function notify(type: string, msg: string) {
+    if (type === 'email') sendEmail(msg);
+    else if (type === 'sms') sendSMS(msg);
+}
+
+// ✅ Prefer polymorphic dispatch
+const notifiers = {
+    email: (msg: string) => sendEmail(msg),
+    sms: (msg: string) => sendSMS(msg),
+};
+notifiers[type]?.(msg);
+```
+
+### 14.7 When `if` Is Appropriate
+
+Use `if` when:
+- Complex boolean expressions with multiple `&&`/`||`
+- Side effects require cleanup (try/catch)
+- Readability would suffer with alternatives
+- Control flow is genuinely imperative
+
+### 14.8 Pattern Summary
+
+| Pattern | Use Case |
+|---------|----------|
+| **Object Maps** | Replace switch/if-else chains |
+| **Guard Clauses** | Handle edge cases early |
+| **Optional Chaining** | Null-safe property access |
+| **Array Methods** | filter/map/find over loops |
+| **Short-Circuit** | Simple conditional execution |
+| **Ternary** | When you need a value (not side effects) |

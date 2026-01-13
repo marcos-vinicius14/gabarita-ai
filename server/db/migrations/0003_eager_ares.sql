@@ -1,0 +1,1 @@
+ALTER TABLE "tb_users" ADD COLUMN "trial_expires_at" timestamp;

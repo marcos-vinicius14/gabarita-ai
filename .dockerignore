@@ -1,0 +1,37 @@
+# Node modules (will be installed inside container)
+node_modules
+
+# Nuxt build artifacts (must be built inside container)
+.nuxt
+.output
+dist
+
+# Development files
+.git
+.github
+.vscode
+*.log
+
+# Test files
+coverage
+*.test.ts
+*.spec.ts
+
+# Docker files (prevent recursion)
+docker-compose*.yml
+compose*.yaml
+Dockerfile*
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea
+*.swp
+*.swo

@@ -1,27 +1,58 @@
 /**
- * Database connection using Neon WebSocket Pool.
+ * Database connection with environment-aware driver selection.
  * 
- * Optimized for Cloudflare Workers/Pages:
- * - WebSocket connection (stable on Cloudflare)
- * - Behaves like a standard Postgres client
- * - Bypasses tagged-template restriction of HTTP adapter
+ * - Development: Uses node-postgres (pg) for local Docker PostgreSQL
+ * - Production: Uses Neon WebSocket Pool for Cloudflare Workers/Pages
+ * - Standalone Worker: Falls back to environment variables
  */
 
-import { Pool } from '@neondatabase/serverless';
-import { drizzle } from 'drizzle-orm/neon-serverless';
+import { drizzle } from 'drizzle-orm/node-postgres';
+import pg from 'pg';
 import * as schema from '../db/schema';
 
-const config = useRuntimeConfig();
-const connString = config.databaseUrl || process.env.DATABASE_URL || '';
+// Lazy-initialized database connection
+let _db: ReturnType<typeof drizzle> | null = null;
+let _pool: pg.Pool | null = null;
 
-if (!connString) {
-    console.error('[DB Error] DATABASE_URL is missing. Please check Cloudflare Environment Variables.');
-    throw new Error('DATABASE_URL is missing. Please check Cloudflare Environment Variables.');
+// Get database URL - works both in Nuxt context and standalone worker
+function getDatabaseUrl(): string {
+    let dbUrl: string | undefined;
+
+    try {
+        // This will work in Nuxt context
+        const config = useRuntimeConfig();
+        dbUrl = config.databaseUrl as string;
+    } catch {
+        // Fall back to env vars for standalone worker
+    }
+
+    // Override with env var if set or not available from config
+    dbUrl = dbUrl || process.env.DATABASE_URL;
+
+    if (!dbUrl) {
+        console.error('[DB Error] DATABASE_URL is missing.');
+        throw new Error('DATABASE_URL is missing.');
+    }
+
+    return dbUrl;
 }
 
-console.log('[DB] Initializing Neon WebSocket Pool connection...');
+function initDb() {
+    if (_db) return _db;
 
-// Use the Pool for WebSocket connection (Stable on Cloudflare)
-const pool = new Pool({ connectionString: connString });
+    const connString = getDatabaseUrl();
+    console.log('[DB] Initializing PostgreSQL connection...');
 
-export const db = drizzle(pool, { schema });
+    _pool = new pg.Pool({ connectionString: connString });
+    _db = drizzle(_pool, { schema });
+
+    return _db;
+}
+
+export const db = new Proxy({} as ReturnType<typeof drizzle>, {
+    get(_, prop) {
+        const instance = initDb();
+        return (instance as any)[prop];
+    }
+});
+
