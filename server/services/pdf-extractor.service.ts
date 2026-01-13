@@ -12,6 +12,7 @@
  */
 
 import { Worker } from 'worker_threads';
+import { cpus } from 'os';
 import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
@@ -21,9 +22,16 @@ import { dirname, join } from 'path';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
-const MAX_TEXT_LENGTH = 50_000; // 50KB max text for AI processing
-const MAX_WORKERS = 4; // Maximum parallel workers
-const MIN_PAGES_PER_WORKER = 5; // Minimum pages to justify a worker
+const MAX_TEXT_LENGTH = 50_000;
+const MAX_WORKERS = 8;
+const MIN_PAGES_PER_WORKER = 3;
+
+function getOptimalWorkerCount(totalPages: number): number {
+    const cpuCount = cpus().length;
+    const maxByPages = Math.ceil(totalPages / MIN_PAGES_PER_WORKER);
+    const maxByCPU = Math.max(2, cpuCount - 1);
+    return Math.min(maxByPages, maxByCPU, MAX_WORKERS);
+}
 
 export interface ExtractionProgress {
     currentPage: number;
@@ -46,6 +54,8 @@ interface WorkerResult {
 }
 
 
+const WORKER_TIMEOUT_MS = 60_000; // 1 minute timeout per worker
+
 function createPageWorker(
     pdfData: Uint8Array,
     startPage: number,
@@ -55,26 +65,40 @@ function createPageWorker(
         const workerPath = join(__dirname, '../workers/pdf-page-worker.ts');
 
         const worker = new Worker(workerPath, {
-            workerData: {
-                pdfData,
-                startPage,
-                endPage,
-            },
+            workerData: { pdfData, startPage, endPage },
             execArgv: ['--import', 'tsx'],
         });
 
+        let isSettled = false;
+
+        const cleanup = () => {
+            if (!isSettled) {
+                isSettled = true;
+                worker.terminate();
+            }
+        };
+
+        const timeoutId = setTimeout(() => {
+            cleanup();
+            reject(new Error(`Worker timeout: pages ${startPage}-${endPage}`));
+        }, WORKER_TIMEOUT_MS);
+
         worker.on('message', (result: WorkerResult) => {
-            worker.terminate();
+            clearTimeout(timeoutId);
+            cleanup();
             resolve(result);
         });
 
         worker.on('error', (error) => {
-            worker.terminate();
+            clearTimeout(timeoutId);
+            cleanup();
             reject(error);
         });
 
         worker.on('exit', (code) => {
-            if (code !== 0) {
+            clearTimeout(timeoutId);
+            if (code !== 0 && !isSettled) {
+                cleanup();
                 reject(new Error(`Worker stopped with exit code ${code}`));
             }
         });
@@ -97,8 +121,6 @@ export async function extractTextFromPdf(
         onProgress,
     } = options;
 
-    // Create a copy of the original data to preserve it for parallel workers
-    // getDocument may detach the ArrayBuffer, so we need to keep a pristine copy
     const originalData = data instanceof Uint8Array ? data : new Uint8Array(data);
     const pdfDataForLoading = new Uint8Array(originalData);
 
@@ -125,7 +147,6 @@ export async function extractTextFromPdf(
     if (totalPages < MIN_PAGES_PER_WORKER * 2) {
         return extractSequential(pdf, totalPages, maxTextLength, onProgress);
     }
-    // Pass the original preserved data to extractParallel
     return extractParallel(originalData, totalPages, maxTextLength, maxWorkers, onProgress);
 }
 
@@ -183,13 +204,13 @@ async function extractParallel(
     pdfData: Uint8Array,
     totalPages: number,
     maxTextLength: number,
-    maxWorkers: number,
+    _maxWorkers: number,
     onProgress?: (progress: ExtractionProgress) => void
 ): Promise<string> {
-    const workerCount = Math.min(maxWorkers, Math.ceil(totalPages / MIN_PAGES_PER_WORKER));
+    const workerCount = getOptimalWorkerCount(totalPages);
     const pagesPerWorker = Math.ceil(totalPages / workerCount);
 
-    console.log(`[PDF Extractor] Using ${workerCount} workers, ~${pagesPerWorker} pages each`);
+    console.log(`[PDF Extractor] Using ${workerCount} workers (${cpus().length} CPUs available), ~${pagesPerWorker} pages each`);
 
     const ranges: Array<{ start: number; end: number }> = [];
     for (let i = 0; i < workerCount; i++) {
@@ -205,7 +226,6 @@ async function extractParallel(
         phase: 'extracting',
     });
 
-    // Create a copy of pdfData for each worker to avoid "ArrayBuffer detached" error
     const workerPromises = ranges.map(({ start, end }) => {
         const pdfDataCopy = new Uint8Array(pdfData.slice());
         return createPageWorker(pdfDataCopy, start, end);
@@ -236,9 +256,6 @@ async function extractParallel(
     return truncatedText;
 }
 
-/**
- * Get PDF metadata without full extraction
- */
 export async function getPdfInfo(data: ArrayBuffer | Uint8Array): Promise<{
     numPages: number;
     title?: string;

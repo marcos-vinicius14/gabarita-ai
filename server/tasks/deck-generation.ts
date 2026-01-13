@@ -1,76 +1,51 @@
 /**
  * Deck Generation Task (Graphile Worker)
  *
- * Processes uploaded PDFs:
- * 1. Downloads from R2 (with gunzip decompression)
- * 2. Extracts text using pdfjs-dist with parallel Worker Threads
- * 3. Generates flashcards using AI (Gemini)
- * 4. Batch inserts cards into PostgreSQL
- * 5. Updates deck status
+ * Processes uploaded PDFs through a simple pipeline:
+ * 1. Download PDF from R2
+ * 2. Extract text from PDF
+ * 3. Generate flashcards with AI
+ * 4. Generate embeddings and save to database
  */
 
 import type { Task, JobHelpers } from 'graphile-worker';
-import { generateText, embed } from 'ai';
-import { createHash } from 'crypto';
-import { getGoogleAI } from '../utils/ai';
 import { db } from '../utils/db';
 import { cards } from '../db/tables/cards';
 import { downloadStreamFromR2, deleteFromR2 } from '../utils/storage';
 import { updateDeckStatus, getDeckById } from '../domain/decks/deck.repository';
-import { publishDeckStatus, closePublisher } from '../utils/pubsub';
-import { getOrSet } from '../utils/cache.service';
+import { publishDeckStatus } from '../utils/pubsub';
 import { extractTextFromPdf } from '../services/pdf-extractor.service';
+import { generateFlashcards, type Flashcard } from '../services/flashcard-generator.service';
+import { generateEmbeddingsBatch } from '../services/embedding.service';
 import type { DeckGenerationJobData } from '../utils/queue';
 
-interface GeneratedCard {
-    front: string;
-    back: string;
-}
+// ============================================================================
+// Error Handling
+// ============================================================================
 
-interface ErrorPattern {
-    match: (message: string) => boolean;
-    response: string;
-}
+const ERROR_MESSAGES: Record<string, string> = {
+    'pdf does not contain enough text': 'O PDF não contém texto suficiente para gerar flashcards.',
+    'no flashcards could be generated': 'Não foi possível gerar flashcards a partir deste PDF.',
+    'no json array found': 'A IA não conseguiu processar o documento. Tente novamente.',
+    'api key': 'Erro de configuração do servidor. Entre em contato com o suporte.',
+    'r2': 'Erro ao acessar o arquivo. Tente fazer o upload novamente.',
+    'storage': 'Erro ao acessar o arquivo. Tente fazer o upload novamente.',
+    'timeout': 'O processamento demorou muito. Tente com um PDF menor.',
+};
 
-const errorPatterns: ErrorPattern[] = [
-    {
-        match: (msg) => msg.includes('pdf does not contain enough text'),
-        response: 'O PDF não contém texto suficiente para gerar flashcards. Tente um documento com mais conteúdo.',
-    },
-    {
-        match: (msg) => msg.includes('no flashcards could be generated'),
-        response: 'Não foi possível gerar flashcards a partir deste PDF. O conteúdo pode não ser adequado para estudo.',
-    },
-    {
-        match: (msg) => msg.includes('failed to parse ai response'),
-        response: 'A IA não conseguiu processar o documento corretamente. Por favor, tente novamente.',
-    },
-    {
-        match: (msg) => msg.includes('api key') || msg.includes('not configured'),
-        response: 'Erro de configuração do servidor. Entre em contato com o suporte.',
-    },
-    {
-        match: (msg) => ['r2', 'storage', 'download'].some(term => msg.includes(term)),
-        response: 'Erro ao acessar o arquivo. Por favor, tente fazer o upload novamente.',
-    },
-    {
-        match: (msg) => msg.includes('timeout') || msg.includes('timed out'),
-        response: 'O processamento demorou muito. Tente com um PDF menor.',
-    },
-];
+const DEFAULT_ERROR = 'Ocorreu um erro ao processar o PDF. Tente novamente.';
 
-const DEFAULT_ERROR_MESSAGE = 'Ocorreu um erro ao processar o PDF. Por favor, tente novamente.';
+const getErrorMessage = (error: Error): string => {
+    const msg = error.message.toLowerCase();
+    const match = Object.entries(ERROR_MESSAGES).find(([key]) => msg.includes(key));
+    return match?.[1] ?? DEFAULT_ERROR;
+};
 
-function getUserFriendlyErrorMessage(error: Error): string {
-    const message = error.message.toLowerCase();
-    const matched = errorPatterns.find(pattern => pattern.match(message));
-    return matched?.response ?? DEFAULT_ERROR_MESSAGE;
-}
+// ============================================================================
+// Helpers
+// ============================================================================
 
-/**
- * Convert a readable stream to ArrayBuffer for PDF processing
- */
-async function streamToArrayBuffer(stream: NodeJS.ReadableStream): Promise<ArrayBuffer> {
+async function streamToBuffer(stream: NodeJS.ReadableStream): Promise<ArrayBuffer> {
     const chunks: Uint8Array[] = [];
     for await (const chunk of stream) {
         chunks.push(chunk as Uint8Array);
@@ -78,239 +53,111 @@ async function streamToArrayBuffer(stream: NodeJS.ReadableStream): Promise<Array
     return Buffer.concat(chunks).buffer;
 }
 
-async function generateFlashcardsFromText(
-    text: string,
-    topic: string,
-    maxCards: number = 20,
+type ProgressFn = (message: string, percent?: number) => Promise<void>;
+
+const createProgressReporter = (deckId: string, userId: string): ProgressFn => {
+    return async (message: string, percent?: number) => {
+        const progress = percent ? `[${percent}%] ${message}` : message;
+        await publishDeckStatus(deckId, userId, 'processing', { progress });
+    };
+};
+
+// ============================================================================
+// Card Insertion
+// ============================================================================
+
+async function insertCardsWithEmbeddings(
+    deckId: string,
+    flashcards: Flashcard[],
     logger: JobHelpers['logger']
-): Promise<GeneratedCard[]> {
-    const contentHash = createHash('sha256')
-        .update(text.substring(0, 1000) + topic + maxCards)
-        .digest('hex')
-        .substring(0, 16);
-    const cacheKey = `ai:flashcards:${contentHash}`;
+): Promise<number> {
+    if (flashcards.length === 0) return 0;
 
-    return getOrSet(cacheKey, async () => {
-        const google = getGoogleAI();
+    logger.info(`Generating embeddings for ${flashcards.length} cards (batch)...`);
 
-        const prompt = `Você é um especialista em criar flashcards de estudo eficazes.
+    const texts = flashcards.map(card => card.back);
+    const embeddings = await generateEmbeddingsBatch(texts);
 
-Com base no seguinte texto extraído de um PDF sobre "${topic}", crie até ${maxCards} flashcards de alta qualidade.
+    logger.info('Embeddings generated successfully');
 
-Regras:
-1. Cada flashcard deve ter uma pergunta (front) clara e objetiva
-2. A resposta (back) deve ser concisa mas completa
-3. Foque nos conceitos mais importantes
-4. Evite perguntas muito simples ou triviais
-5. Use linguagem clara e direta
-6. Se o texto estiver em português, crie os flashcards em português
-
-Texto do PDF:
----
-${text.substring(0, 15000)}
----
-
-Retorne APENAS um array JSON válido com os flashcards no formato:
-[{"front": "pergunta", "back": "resposta"}, ...]
-
-Não inclua explicações, markdown ou código, apenas o JSON puro.`;
-
-        const result = await generateText({
-            model: google('gemini-2.5-flash'),
-            prompt,
-            temperature: 0.7,
-            maxTokens: 4000,
-        });
-
-        let jsonText = result.text.trim();
-
-        logger.debug(`Raw AI response length: ${jsonText.length}`);
-
-        const extractFromCodeBlock = (text: string): string => {
-            const completeMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/);
-            if (completeMatch) {
-                logger.debug('Extracted from complete code block');
-                return completeMatch[1].trim();
-            }
-
-            const incompleteMatch = text.match(/```(?:json)?\s*([\s\S]*)/);
-            if (incompleteMatch) {
-                logger.debug('Extracted from incomplete code block (truncated response)');
-                return incompleteMatch[1].trim();
-            }
-
-            return text;
-        };
-
-        jsonText = extractFromCodeBlock(jsonText);
-
-        const extractJsonArray = (text: string): string | null => {
-            const completeMatch = text.match(/\[[\s\S]*\]/);
-            if (completeMatch) return completeMatch[0];
-
-            const arrayStart = text.indexOf('[');
-            if (arrayStart === -1) return null;
-
-            const partialArray = text.substring(arrayStart);
-            const lastCompleteObject = partialArray.lastIndexOf('}');
-            if (lastCompleteObject === -1) return null;
-
-            logger.debug('Reconstructed array from partial response');
-            return partialArray.substring(0, lastCompleteObject + 1) + ']';
-        };
-
-        const jsonArray = extractJsonArray(jsonText);
-
-        if (!jsonArray) {
-            logger.error(`No JSON array found in response: ${jsonText.substring(0, 1000)}`);
-            throw new Error('Failed to parse AI response as JSON - no array found');
-        }
-
-        const parseFlashcards = (json: string): GeneratedCard[] => {
-            const parsed = JSON.parse(json);
-            if (!Array.isArray(parsed)) {
-                throw new Error('AI response is not an array');
-            }
-            return parsed;
-        };
-
-        const flashcards = (() => {
-            try {
-                return parseFlashcards(jsonArray);
-            } catch (parseError) {
-                logger.error(`JSON parse error: ${parseError}`);
-                throw new Error('Failed to parse AI response as JSON - invalid JSON syntax');
-            }
-        })();
-
-        logger.info(`Successfully parsed ${flashcards.length} flashcards from AI`);
-
-        // Validate card structure using filter
-        const isValidCard = (card: GeneratedCard): boolean =>
-            typeof card.front === 'string' &&
-            typeof card.back === 'string' &&
-            card.front.trim().length > 0 &&
-            card.back.trim().length > 0;
-
-        return flashcards.filter(isValidCard);
-    }, 600); // 10 minutes TTL for AI responses
-}
-
-/**
- * Generate embedding for text using Gemini embedding model
- * Uses Matryoshka representation with 768 dimensions to match schema
- */
-async function generateEmbedding(text: string): Promise<number[]> {
-    const google = getGoogleAI();
-
-    const { embedding } = await embed({
-        model: google.textEmbeddingModel('gemini-embedding-001', {
-            outputDimensionality: 768,
-        }),
-        value: text,
-    });
-
-    return embedding;
-}
-
-async function insertCards(deckId: string, generatedCards: GeneratedCard[], logger: JobHelpers['logger']) {
-    if (generatedCards.length === 0) {
-        return 0;
-    }
-
-    logger.info(`Generating embeddings for ${generatedCards.length} cards...`);
-
-    const cardValues = await Promise.all(
-        generatedCards.map(async (card) => {
-            const backText = card.back.trim();
-            const embedding = await generateEmbedding(backText);
-
-            return {
-                deckId,
-                front: card.front.trim(),
-                back: backText,
-                embedding,
-            };
-        })
-    );
-
-    logger.info('Successfully generated embeddings');
+    const cardValues = flashcards.map((card, i) => ({
+        deckId,
+        front: card.front,
+        back: card.back,
+        embedding: embeddings[i],
+    }));
 
     await (db as any).insert(cards).values(cardValues);
-
     return cardValues.length;
 }
 
+// ============================================================================
+// Main Task
+// ============================================================================
 
 const task: Task = async (payload, helpers) => {
-    const { deckId, userId, r2Key, originalFilename } = payload as DeckGenerationJobData;
+    const { deckId, userId, r2Key } = payload as DeckGenerationJobData;
     const { logger, job } = helpers;
+    const report = createProgressReporter(deckId, userId);
 
     logger.info(`Processing job ${job.id} for deck ${deckId}`);
 
     try {
+        // Step 1: Validate deck exists
         const deck = await getDeckById(deckId);
         if (!deck) {
             logger.warn(`Deck ${deckId} not found, skipping`);
             return;
         }
 
-        logger.info(`Downloading from R2: ${r2Key}`);
-        await publishDeckStatus(deckId, userId, 'processing', { progress: 'Baixando arquivo...' });
-
+        // Step 2: Download PDF
+        await report('Baixando arquivo...');
         const pdfStream = await downloadStreamFromR2(r2Key);
-        const pdfArrayBuffer = await streamToArrayBuffer(pdfStream);
-        logger.info(`Downloaded ${pdfArrayBuffer.byteLength} bytes`);
+        const pdfBuffer = await streamToBuffer(pdfStream);
+        logger.info(`Downloaded ${pdfBuffer.byteLength} bytes`);
 
-        // Extract text with progress reporting
-        const text = await extractTextFromPdf(pdfArrayBuffer, {
-            onProgress: (progress) => {
-                if (progress.phase === 'extracting') {
-                    publishDeckStatus(deckId, userId, 'processing', {
-                        progress: `Extraindo página ${progress.currentPage}/${progress.totalPages}...`
-                    });
+        // Step 3: Extract text
+        const text = await extractTextFromPdf(pdfBuffer, {
+            onProgress: (p) => {
+                if (p.phase === 'extracting') {
+                    const percent = Math.round((p.currentPage / p.totalPages) * 30);
+                    report(`Extraindo página ${p.currentPage}/${p.totalPages}...`, percent);
                 }
             }
         });
-
         logger.info(`Extracted ${text.length} characters`);
 
         if (text.trim().length < 100) {
             throw new Error('PDF does not contain enough text for card generation');
         }
 
-        logger.info('Generating flashcards with AI');
-        await publishDeckStatus(deckId, userId, 'processing', { progress: 'Gerando flashcards com IA...' });
-
-        const flashcards = await generateFlashcardsFromText(
-            text,
-            deck.topic,
-            30,
-            logger
-        );
+        // Step 4: Generate flashcards
+        await report('Gerando flashcards com IA...', 40);
+        const flashcards = await generateFlashcards(text, { topic: deck.topic });
         logger.info(`Generated ${flashcards.length} flashcards`);
 
         if (flashcards.length === 0) {
             throw new Error('No flashcards could be generated from the PDF');
         }
 
-        logger.info('Inserting cards into database');
-        await publishDeckStatus(deckId, userId, 'processing', { progress: 'Salvando flashcards...' });
+        // Step 5: Save to database
+        await report('Gerando embeddings e salvando...', 70);
+        const count = await insertCardsWithEmbeddings(deckId, flashcards, logger);
+        logger.info(`Inserted ${count} cards`);
 
-        const insertedCount = await insertCards(deckId, flashcards, logger);
-        logger.info(`Inserted ${insertedCount} cards`);
-
+        // Step 6: Mark as ready
         await updateDeckStatus(deckId, 'ready');
         await publishDeckStatus(deckId, userId, 'ready');
         logger.info(`Deck ${deckId} marked as ready`);
 
+        // Step 7: Cleanup
         await deleteFromR2(r2Key);
         logger.info(`Deleted ${r2Key} from R2`);
 
     } catch (error: any) {
         logger.error(`Job ${job.id} failed: ${error.message}`);
 
-        const userMessage = getUserFriendlyErrorMessage(error);
+        const userMessage = getErrorMessage(error);
         await updateDeckStatus(deckId, 'failed', userMessage);
         await publishDeckStatus(deckId, userId, 'failed', { errorMessage: userMessage });
 
