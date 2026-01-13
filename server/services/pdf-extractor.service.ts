@@ -12,11 +12,12 @@
  */
 
 import { Worker } from 'worker_threads';
-import { getDocument, GlobalWorkerOptions } from 'pdfjs-dist/legacy/build/pdf.mjs';
+import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 
-GlobalWorkerOptions.workerSrc = '';
+// Note: Do NOT set GlobalWorkerOptions.workerSrc in Node.js - it causes fake worker errors
+// The worker-related options are passed directly to getDocument() instead
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -96,7 +97,10 @@ export async function extractTextFromPdf(
         onProgress,
     } = options;
 
-    const pdfData = data instanceof Uint8Array ? data : new Uint8Array(data);
+    // Create a copy of the original data to preserve it for parallel workers
+    // getDocument may detach the ArrayBuffer, so we need to keep a pristine copy
+    const originalData = data instanceof Uint8Array ? data : new Uint8Array(data);
+    const pdfDataForLoading = new Uint8Array(originalData);
 
     onProgress?.({
         currentPage: 0,
@@ -106,9 +110,11 @@ export async function extractTextFromPdf(
     });
 
     const loadingTask = getDocument({
-        data: pdfData,
+        data: pdfDataForLoading,
         useSystemFonts: true,
         disableFontFace: true,
+        isEvalSupported: false,
+        useWorkerFetch: false,
     });
 
     const pdf = await loadingTask.promise;
@@ -119,7 +125,8 @@ export async function extractTextFromPdf(
     if (totalPages < MIN_PAGES_PER_WORKER * 2) {
         return extractSequential(pdf, totalPages, maxTextLength, onProgress);
     }
-    return extractParallel(pdfData, totalPages, maxTextLength, maxWorkers, onProgress);
+    // Pass the original preserved data to extractParallel
+    return extractParallel(originalData, totalPages, maxTextLength, maxWorkers, onProgress);
 }
 
 async function extractSequential(
@@ -198,9 +205,11 @@ async function extractParallel(
         phase: 'extracting',
     });
 
-    const workerPromises = ranges.map(({ start, end }) =>
-        createPageWorker(pdfData, start, end)
-    );
+    // Create a copy of pdfData for each worker to avoid "ArrayBuffer detached" error
+    const workerPromises = ranges.map(({ start, end }) => {
+        const pdfDataCopy = new Uint8Array(pdfData.slice());
+        return createPageWorker(pdfDataCopy, start, end);
+    });
     const results = await Promise.all(workerPromises);
 
     const errors = results.filter(r => r.error);
@@ -241,6 +250,8 @@ export async function getPdfInfo(data: ArrayBuffer | Uint8Array): Promise<{
         data: pdfData,
         useSystemFonts: true,
         disableFontFace: true,
+        isEvalSupported: false,
+        useWorkerFetch: false,
     });
 
     const pdf = await loadingTask.promise;

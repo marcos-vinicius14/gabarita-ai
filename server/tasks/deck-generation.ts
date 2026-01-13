@@ -116,7 +116,7 @@ Retorne APENAS um array JSON válido com os flashcards no formato:
 Não inclua explicações, markdown ou código, apenas o JSON puro.`;
 
         const result = await generateText({
-            model: google('gemini-3.0-flash'),
+            model: google('gemini-2.5-flash'),
             prompt,
             temperature: 0.7,
             maxTokens: 4000,

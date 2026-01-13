@@ -16,5 +16,8 @@ export * from './tables/reviews';
 // Billing
 export * from './tables/credit-transactions';
 
+// Cache
+export * from './tables/cache';
+
 // Waitlist
 export * from './tables/wailist';

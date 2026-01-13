@@ -6,9 +6,10 @@
  */
 
 import { workerData, parentPort } from 'worker_threads';
-import { getDocument, GlobalWorkerOptions } from 'pdfjs-dist/legacy/build/pdf.mjs';
+import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs';
 
-GlobalWorkerOptions.workerSrc = '';
+// Note: Do NOT set GlobalWorkerOptions.workerSrc in Node.js - it causes fake worker errors
+// The worker-related options are passed directly to getDocument() instead
 
 interface WorkerData {
     pdfData: Uint8Array;
@@ -31,6 +32,8 @@ async function extractPages(): Promise<void> {
             data: pdfData,
             useSystemFonts: true,
             disableFontFace: true,
+            isEvalSupported: false,
+            useWorkerFetch: false,
         });
 
         const pdf = await loadingTask.promise;

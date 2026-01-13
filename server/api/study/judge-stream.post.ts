@@ -54,7 +54,7 @@ export default defineEventHandler(async (event) => {
     const google = getGoogleAI();
 
     const result = streamText({
-        model: google('gemini-3.0-flash'),
+        model: google('gemini-2.5-flash'),
         system: EXPLANATION_SYSTEM_PROMPT,
         prompt: buildExplanationPrompt(userAnswer, cardWithOwner.card.back),
         temperature: 0.7,
